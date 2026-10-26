@@ -28,6 +28,7 @@ namespace {
     bool g_statePollPending = false;
     std::map<std::string, CCNode*> g_remoteAvatars;
     std::vector<std::string> g_roomMemberIds;
+    std::vector<std::pair<std::string, std::string>> g_savedLevelsCache;
 
     double nowSeconds() {
         return std::chrono::duration<double>(
@@ -36,6 +37,29 @@ namespace {
 
     void cacheSharedLevel(std::string const& name, std::string const& data) {
         if (data.empty() || data.size() > 950000) return;
+        auto count = Mod::get()->getSavedValue<int>("saved-level-count", 0);
+        if (count < 0) count = 0;
+        if (count > 8) count = 8;
+        int existing = -1;
+        for (int i = 0; i < count; ++i) {
+            auto savedData = Mod::get()->getSavedValue<std::string>("saved-level-data-" + std::to_string(i), "");
+            if (savedData == data) { existing = i; break; }
+        }
+        if (existing < 0) {
+            if (count == 8) {
+                for (int i = 1; i < 8; ++i) {
+                    auto oldName = Mod::get()->getSavedValue<std::string>("saved-level-name-" + std::to_string(i), "");
+                    auto oldData = Mod::get()->getSavedValue<std::string>("saved-level-data-" + std::to_string(i), "");
+                    Mod::get()->setSavedValue<std::string>("saved-level-name-" + std::to_string(i - 1), oldName);
+                    Mod::get()->setSavedValue<std::string>("saved-level-data-" + std::to_string(i - 1), oldData);
+                }
+                count = 7;
+            }
+            existing = count++;
+            Mod::get()->setSavedValue<int>("saved-level-count", count);
+        }
+        Mod::get()->setSavedValue<std::string>("saved-level-name-" + std::to_string(existing), name);
+        Mod::get()->setSavedValue<std::string>("saved-level-data-" + std::to_string(existing), data);
         Mod::get()->setSavedValue<std::string>("saved-level-name", name);
         Mod::get()->setSavedValue<std::string>("saved-level-data", data);
     }
@@ -773,6 +797,11 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
             this, menu_selector(GDRTCPauseLayer::onOpenSharedLevel));
         open->setPosition({0.f, -20.f});
         menu->addChild(open);
+        auto saved = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Saved Levels", 108, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .58f),
+            this, menu_selector(GDRTCPauseLayer::onOpenSavedLevels));
+        saved->setPosition({0.f, -58.f});
+        menu->addChild(saved);
     }
 
     void onShareCurrentLevel(CCObject*) {
@@ -806,6 +835,67 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
                 cacheSharedLevel(name, data);
                 Notification::create("Level shared with room", NotificationIcon::Success)->show();
             });
+    }
+
+    void onOpenSavedLevels(CCObject*) {
+        g_savedLevelsCache.clear();
+        auto count = Mod::get()->getSavedValue<int>("saved-level-count", 0);
+        if (count < 0) count = 0;
+        if (count > 8) count = 8;
+        for (int i = 0; i < count; ++i) {
+            auto name = Mod::get()->getSavedValue<std::string>("saved-level-name-" + std::to_string(i), "");
+            auto data = Mod::get()->getSavedValue<std::string>("saved-level-data-" + std::to_string(i), "");
+            if (!data.empty()) g_savedLevelsCache.emplace_back(name.empty() ? "Shared level" : name, data);
+        }
+        if (g_savedLevelsCache.empty()) {
+            FLAlertLayer::create("GD-RTC", "Shared levels you open will be saved here for later.", "OK")->show();
+            return;
+        }
+        auto win = CCDirector::sharedDirector()->getWinSize();
+        auto scene = CCScene::create();
+        auto bg = CCLayerColor::create({12, 20, 40, 255});
+        bg->setContentSize(win);
+        scene->addChild(bg);
+        auto title = CCLabelBMFont::create("Saved Shared Levels", "bigFont.fnt");
+        title->setPosition({win.width / 2, win.height - 42.f});
+        title->setScale(0.72f);
+        scene->addChild(title);
+        auto menu = CCMenu::create();
+        menu->setPosition({win.width / 2, win.height / 2 + 8.f});
+        scene->addChild(menu);
+        auto shown = std::min<size_t>(5, g_savedLevelsCache.size());
+        for (size_t i = 0; i < shown; ++i) {
+            auto index = g_savedLevelsCache.size() - 1 - i;
+            auto label = g_savedLevelsCache[index].first;
+            if (label.size() > 24) label.resize(24);
+            auto button = CCMenuItemSpriteExtra::create(
+                ButtonSprite::create(label.c_str(), 250, true, "bigFont.fnt", "GJ_button_01.png", 28.f, .52f),
+                this, menu_selector(GDRTCPauseLayer::onOpenSavedLevelByIndex));
+            button->setTag(static_cast<int>(index));
+            button->setPosition({0.f, 74.f - static_cast<float>(i) * 42.f});
+            menu->addChild(button);
+        }
+        auto backMenu = CCMenu::create();
+        backMenu->setPosition({win.width / 2, 32.f});
+        scene->addChild(backMenu);
+        auto back = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Back", 90, true, "bigFont.fnt", "GJ_button_04.png", 28.f, .6f),
+            this, menu_selector(GDRTCPauseLayer::onCloseSavedLevels));
+        backMenu->addChild(back);
+        CCDirector::sharedDirector()->pushScene(scene);
+    }
+
+    void onOpenSavedLevelByIndex(CCObject* sender) {
+        auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(sender);
+        if (!item) return;
+        auto index = item->getTag();
+        if (index < 0 || static_cast<size_t>(index) >= g_savedLevelsCache.size()) return;
+        auto const level = g_savedLevelsCache[static_cast<size_t>(index)];
+        openLevelEditor(level.first, level.second);
+    }
+
+    void onCloseSavedLevels(CCObject*) {
+        CCDirector::sharedDirector()->popScene();
     }
 
     void onOpenSharedLevel(CCObject*) {
