@@ -206,24 +206,24 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
         auto membersBack = CCLayerColor::create({8, 14, 31, 220});
         membersBack->setContentSize({310.f, 104.f});
-        membersBack->setPosition({-155.f, -32.f});
+        membersBack->setPosition({-155.f, -18.f});
         panel->addChild(membersBack, 0);
 
         auto members = CCLabelBMFont::create("Players in room:\n—", "goldFont.fnt");
         members->setID("gd-rtc-room-members");
         members->setScale(0.42f);
-        members->setPosition({0, 21.f});
+        members->setPosition({0, 30.f});
         panel->addChild(members);
 
         auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
         status->setID("gd-rtc-room-status");
         status->setScale(0.42f);
-        status->setPosition({0, -178.f});
+        status->setPosition({0, -182.f});
         panel->addChild(status);
 
         auto menu = CCMenu::create();
         menu->setID("gd-rtc-room-panel-menu");
-        menu->setPosition({0, -70.f});
+        menu->setPosition({0, -94.f});
         panel->addChild(menu);
 
         auto createBtn = CCMenuItemSpriteExtra::create(
@@ -261,10 +261,10 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             ButtonSprite::create("Open Shared Level", 150, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
             this, menu_selector(GDRTCMenuLayer::onOpenSharedLevel));
         openLevelBtn->setID("gd-rtc-open-level");
-        openLevelBtn->setPosition({0, -78});
+        openLevelBtn->setPosition({0, -30});
         menu->addChild(openLevelBtn);
 
-        closeBtn->setPosition({0, -111});
+        closeBtn->setPosition({0, -63});
         menu->addChild(closeBtn);
 
         updateRoomControls(!g_activeRoomCode.empty());
