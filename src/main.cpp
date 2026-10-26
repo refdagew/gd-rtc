@@ -44,17 +44,9 @@ namespace {
         return std::string(kDatabaseUrl) + "/rooms/" + code + suffix + ".json";
     }
 
-    void showMessage(std::string const& title, std::string const& message) {
-        FLAlertLayer::create(title.c_str(), message.c_str(), "OK")->show();
-    }
-
     std::string responseError(geode::utils::web::WebResponse const& response) {
-        auto body = response.string();
-        std::string detail = body ? body.unwrap() : std::string(response.errorMessage());
-        if (detail.empty()) detail = "No response body was returned.";
-        if (detail.size() > 240) detail.resize(240);
-        (void)detail;
-        return "Couldn't connect to the room service. Please try again in a moment.";
+        (void)response;
+        return "Connection failed. Please try again.";
     }
 }
 
@@ -78,6 +70,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         bottomMenu->addChild(button);
         if (auto menu = typeinfo_cast<CCMenu*>(bottomMenu)) menu->updateLayout();
         return true;
+    }
+
+    void setRoomStatus(std::string const& message) {
+        if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
+            if (auto status = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-status"))) {
+                status->setString(message.c_str());
+            }
+        }
     }
 
     void setBackgroundMenusEnabled(bool enabled) {
@@ -185,19 +185,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .bodyJSON(room)
             .putSync(roomUrl(code));
         if (!response.ok()) {
-            showMessage("GD-RTC", responseError(response));
+            setRoomStatus(responseError(response));
             return;
         }
 
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
             if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) input->setString(code);
         }
-        if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
-            if (auto status = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-status"))) {
-                auto text = "Room code: " + code + "  —  share it with your friend";
-                status->setString(text.c_str());
-            }
-        }
+        setRoomStatus("Room code: " + code + " — share it with your friend");
     }
 
     void onJoinRoom(CCObject*) {
@@ -209,7 +204,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         std::string code(rawCode.c_str());
         for (auto& c : code) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         if (code.size() != 6) {
-            showMessage("GD-RTC", "Enter the six-character room code first.");
+            setRoomStatus("Enter the six-character room code.");
             return;
         }
 
@@ -217,12 +212,12 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .timeout(std::chrono::seconds(12))
             .getSync(roomUrl(code));
         if (!roomResponse.ok()) {
-            showMessage("GD-RTC", responseError(roomResponse));
+            setRoomStatus(responseError(roomResponse));
             return;
         }
         auto parsed = roomResponse.json();
         if (!parsed || parsed.unwrap().isNull()) {
-            showMessage("GD-RTC", "That room code wasn't found. Check the code and try again.");
+            setRoomStatus("Room not found. Check the code and try again.");
             return;
         }
 
@@ -239,15 +234,10 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .bodyJSON(member)
             .putSync(roomUrl(code, "/members/" + peer));
         if (!memberResponse.ok()) {
-            showMessage("GD-RTC", responseError(memberResponse));
+            setRoomStatus(responseError(memberResponse));
             return;
         }
 
-        if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
-            if (auto status = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-status"))) {
-                auto text = "Joined room " + code;
-                status->setString(text.c_str());
-            }
-        }
+        setRoomStatus("Joined room " + code + ".");
     }
 };
