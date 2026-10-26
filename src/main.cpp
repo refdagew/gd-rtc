@@ -112,7 +112,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
         auto menu = CCMenu::create();
         menu->setPosition({win.width / 2, win.height / 2 - 30});
-        m_roomPanel->addChild(menu);
+        panel->addChild(menu);
 
         auto createBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
