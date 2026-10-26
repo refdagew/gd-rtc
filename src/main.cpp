@@ -25,9 +25,6 @@ namespace {
     std::string g_activePeerId;
     bool g_refreshPending = false;
     bool g_roomOperationPending = false;
-    bool g_stateSendPending = false;
-    bool g_statePollPending = false;
-    std::map<std::string, CCNode*> g_remoteAvatars;
     std::vector<std::string> g_roomMemberIds;
     std::vector<std::pair<std::string, std::string>> g_savedLevelsCache;
 
@@ -631,169 +628,39 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
 
 
+// Gameplay state is intentionally NOT written to Firebase. Firebase is only for
+// room membership, level sharing, and WebRTC offer/answer/ICE signaling.
+// A single level snapshot per level is low-frequency metadata, not gameplay traffic.
 class $modify(GDRTCPlayLayer, PlayLayer) {
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
-        if (g_activeRoomCode.empty() || !this->m_player1 || !this->m_level) return;
+        if (g_activeRoomCode.empty() || !g_activePeerId.size() || !this->m_player1 || !this->m_level) return;
 
-        static double lastSendAt = 0.0;
-        static double lastPollAt = 0.0;
+        static std::string lastPublishedLevelKey;
         auto now = nowSeconds();
         auto code = g_activeRoomCode;
         auto peer = g_activePeerId;
-
-        // Publish the current level once per room/peer/level so room members can
-        // use the per-player Go button without uploading level data every frame.
-        static std::string lastPublishedLevelKey;
         auto levelName = std::string(this->m_level->m_levelName.c_str());
         auto levelData = std::string(this->m_level->m_levelString.c_str());
         auto levelKey = code + "/" + peer + "/" + std::to_string(static_cast<int>(this->m_level->m_levelID)) + "/" + levelName;
-        if (levelKey != lastPublishedLevelKey && !levelData.empty() && levelData.size() < 950000) {
-            lastPublishedLevelKey = levelKey;
-            matjson::Value levelInfo = matjson::Value::object();
-            levelInfo["name"] = levelName;
-            levelInfo["levelData"] = levelData;
-            levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
-            levelInfo["updatedAt"] = now;
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(12))
-                .bodyJSON(levelInfo)
-                .put(roomUrl(code, "/members/" + peer + "/level")),
-                [](geode::utils::web::WebResponse) {});
-        }
+        if (levelKey == lastPublishedLevelKey || levelData.empty() || levelData.size() > 950000) return;
+        lastPublishedLevelKey = levelKey;
 
-        if (now - lastSendAt >= 0.10 && !g_stateSendPending) {
-            lastSendAt = now;
-            g_stateSendPending = true;
-            auto p1 = this->m_player1;
-            auto p2 = this->m_player2;
-            auto pos1 = p1->getPosition();
-            auto pos2 = p2 ? p2->getPosition() : pos1;
-            matjson::Value state = matjson::Value::object();
-            state["levelID"] = static_cast<int>(this->m_level->m_levelID);
-            state["levelName"] = std::string(this->m_level->m_levelName.c_str());
-            state["x"] = pos1.x;
-            state["y"] = pos1.y;
-            state["rotation"] = p1->getRotation();
-            state["x2"] = pos2.x;
-            state["y2"] = pos2.y;
-            state["rotation2"] = p2 ? p2->getRotation() : 0.f;
-            state["dual"] = p2 != nullptr;
-            state["percent"] = this->getCurrentPercent();
-            state["icon"] = GameManager::sharedState()->getPlayerFrame();
-            state["color1"] = GameManager::sharedState()->getPlayerColor();
-            state["color2"] = GameManager::sharedState()->getPlayerColor2();
-            state["glow"] = GameManager::sharedState()->m_playerGlow;
-            state["updatedAt"] = now;
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(5))
-                .bodyJSON(state)
-                .put(roomUrl(code, "/members/" + peer + "/state")),
-                [](geode::utils::web::WebResponse) { g_stateSendPending = false; });
-        }
-
-        if (now - lastPollAt >= 0.25 && !g_statePollPending) {
-            lastPollAt = now;
-            g_statePollPending = true;
-            Ref<GDRTCPlayLayer> self = this;
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(5))
-                .get(roomUrl(code, "/members")),
-                [self, code, peer](geode::utils::web::WebResponse response) {
-                    g_statePollPending = false;
-                    if (!response.ok() || g_activeRoomCode != code || PlayLayer::get() != self) return;
-                    auto parsed = response.json();
-                    if (!parsed || parsed.unwrap().isNull()) return;
-                    auto members = parsed.unwrap();
-                    std::map<std::string, bool> seen;
-                    auto local = self->m_level;
-                    if (!local) return;
-                    for (auto const& [id, member] : members) {
-                        if (id == peer) continue;
-                        auto state = member["state"];
-                        auto updatedValue = state["updatedAt"].asDouble();
-                        auto levelIdValue = state["levelID"].asInt();
-                        auto levelNameValue = state["levelName"].asString();
-                        auto xValue = state["x"].asDouble();
-                        auto yValue = state["y"].asDouble();
-                        auto rotationValue = state["rotation"].asDouble();
-                        auto iconValue = state["icon"].asInt();
-                        auto color1Value = state["color1"].asInt();
-                        auto color2Value = state["color2"].asInt();
-                        auto glowValue = state["glow"].asBool();
-                        auto percentValue = state["percent"].asDouble();
-                        if (!updatedValue || !levelIdValue || !levelNameValue || !xValue || !yValue || !rotationValue) continue;
-                        if (nowSeconds() - updatedValue.unwrap() > 3.0) continue;
-                        if (levelIdValue.unwrap() != local->m_levelID ||
-                            levelNameValue.unwrap() != std::string(local->m_levelName.c_str())) continue;
-
-                        auto found = g_remoteAvatars.find(id);
-                        CCNode* avatar = found == g_remoteAvatars.end() ? nullptr : found->second;
-                        if (!avatar) {
-                            avatar = SimplePlayer::create(iconValue ? iconValue.unwrap() : 1);
-                            if (!avatar) avatar = CCSprite::createWithSpriteFrameName("player_01_001.png");
-                            if (!avatar) avatar = CCLayerColor::create({90, 210, 255, 255}, 18.f, 18.f);
-                            avatar->setScale(0.68f);
-                            avatar->setID(("gd-rtc-remote-" + id).c_str());
-                            auto label = CCLabelBMFont::create("", "goldFont.fnt");
-                            label->setID("gd-rtc-remote-name");
-                            label->setScale(0.38f);
-                            label->setPosition({0.f, 22.f});
-                            avatar->addChild(label, 2);
-                            auto secondary = CCLayerColor::create({255, 210, 90, 255}, 10.f, 10.f);
-                            secondary->setID("gd-rtc-remote-secondary");
-                            secondary->setVisible(false);
-                            avatar->addChild(secondary, 1);
-                            self->addChild(avatar, 1000);
-                            g_remoteAvatars[id] = avatar;
-                        }
-                        avatar->setVisible(true);
-                        avatar->setPosition({static_cast<float>(xValue.unwrap()), static_cast<float>(yValue.unwrap())});
-                        avatar->setRotation(static_cast<float>(rotationValue.unwrap()));
-                        if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
-                            auto nameValue = member["name"].asString();
-                            std::string name = nameValue ? nameValue.unwrap() : "Player";
-                            if (name.size() > 16) name.resize(16);
-                            if (percentValue) name += " " + std::to_string(static_cast<int>(percentValue.unwrap())) + "%";
-                            label->setString(name.c_str());
-                        }
-                        if (auto simple = typeinfo_cast<SimplePlayer*>(avatar)) {
-                            auto gm = GameManager::sharedState();
-                            if (color1Value) simple->setColor(gm->colorForIdx(static_cast<int>(color1Value.unwrap())));
-                            if (color2Value) simple->setSecondColor(gm->colorForIdx(static_cast<int>(color2Value.unwrap())));
-                            if (glowValue && glowValue.unwrap() && color2Value) {
-                                simple->setGlowOutline(gm->colorForIdx(static_cast<int>(color2Value.unwrap())));
-                            }
-                        }
-                        auto dualValue = state["dual"].asBool();
-                        auto x2Value = state["x2"].asDouble();
-                        auto y2Value = state["y2"].asDouble();
-                        auto secondary = avatar->getChildByID("gd-rtc-remote-secondary");
-                        bool dual = dualValue && dualValue.unwrap() && x2Value && y2Value;
-                        if (secondary) {
-                            secondary->setVisible(dual);
-                            if (dual) secondary->setPosition({
-                                static_cast<float>(x2Value.unwrap() - xValue.unwrap()),
-                                static_cast<float>(y2Value.unwrap() - yValue.unwrap())
-                            });
-                        }
-                        seen[id] = true;
-                    }
-                    for (auto it = g_remoteAvatars.begin(); it != g_remoteAvatars.end();) {
-                        if (!seen[it->first]) {
-                            if (it->second) it->second->removeFromParent();
-                            it = g_remoteAvatars.erase(it);
-                        } else ++it;
-                    }
-                });
-        }
+        matjson::Value levelInfo = matjson::Value::object();
+        levelInfo["name"] = levelName;
+        levelInfo["levelData"] = levelData;
+        levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
+        levelInfo["updatedAt"] = now;
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(12))
+            .bodyJSON(levelInfo)
+            .put(roomUrl(code, "/members/" + peer + "/level")),
+            [](geode::utils::web::WebResponse) {});
     }
 
     void onExit() {
         PlayLayer::onExit();
         g_remoteAvatars.clear();
-        g_stateSendPending = false;
-        g_statePollPending = false;
     }
 };
 
