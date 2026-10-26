@@ -872,7 +872,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                    << "|" << gm->getPlayerColor2() << "|" << (gm->m_playerGlow ? 1 : 0)
                    << "|" << static_cast<int>(this->m_level->m_levelID) << "|";
             std::string safeLevelName = this->m_level->m_levelName.c_str();
-            for (auto& ch : safeLevelName) if (ch == '|' || ch == '\\n' || ch == '\\r') ch = ' ';
+            for (auto& ch : safeLevelName) if (ch == '|' || ch == '\n' || ch == '\r') ch = ' ';
             if (safeLevelName.size() > 63) safeLevelName.resize(63);
             packet << safeLevelName;
             auto payload = packet.str();
@@ -895,7 +895,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%63[^|]",
                 &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &color1, &color2, &glow, &levelId, remoteLevelName) != 14) continue;
             std::string localLevelName = this->m_level->m_levelName.c_str();
-            for (auto& ch : localLevelName) if (ch == '|' || ch == '\\n' || ch == '\\r') ch = ' ';
+            for (auto& ch : localLevelName) if (ch == '|' || ch == '\n' || ch == '\r') ch = ' ';
             if (localLevelName.size() > 63) localLevelName.resize(63);
             if (levelId != static_cast<int>(this->m_level->m_levelID) || localLevelName != remoteLevelName) continue;
 
