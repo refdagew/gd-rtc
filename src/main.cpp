@@ -512,19 +512,9 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 auto members = data["members"];
                 std::string names = "Players in room:";
                 unsigned int count = 0;
-                auto now = nowSeconds();
                 for (auto const& [id, value] : members) {
+                    (void)id;
                     if (count >= 8) break;
-                    auto lastSeenValue = value["lastSeen"].asDouble();
-                    double lastSeen = lastSeenValue ? lastSeenValue.unwrap() : 0.0;
-                    if (lastSeen > 0.0 && now - lastSeen > 45.0) {
-                        // Prune stale presence so crashed/disconnected clients don't stay in the room list.
-                        async::spawn(geode::utils::web::WebRequest()
-                            .timeout(std::chrono::seconds(6))
-                            .send("DELETE", roomUrl(code, "/members/" + id)),
-                            [](geode::utils::web::WebResponse) {});
-                        continue;
-                    }
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
                     if (name.size() > 24) name.resize(24);
