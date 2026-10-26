@@ -1233,7 +1233,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                     progressIt->second->setPosition({width * (std::clamp(percent, 0.f, 100.f) / 100.f - 0.5f), -11.f});
                     if (auto simple = typeinfo_cast<SimplePlayer*>(progressIt->second)) {
                         simple->updatePlayerFrame(icon, static_cast<IconType>(iconType));
-                        simple->setScaleY(0.28f);
+                        simple->setScaleY(gravity1 ? -0.28f : 0.28f);
                         auto gm = GameManager::sharedState();
                         simple->setColor(gm->colorForIdx(color1));
                         simple->setSecondColor(gm->colorForIdx(color2));
