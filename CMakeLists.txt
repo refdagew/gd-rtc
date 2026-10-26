@@ -49,15 +49,14 @@ FetchContent_Declare(
 # The Geode Windows toolchain reports an MSVC simulation ID while using
 # clang, so let Mbed TLS select its actual Clang compile flags.
 set(_gd_rtc_simulate_id "${CMAKE_C_SIMULATE_ID}")
-set(_gd_rtc_c_flags "${CMAKE_C_FLAGS}")
-set(_gd_rtc_c_flags_cache "$CACHE{CMAKE_C_FLAGS}")
 set(CMAKE_C_SIMULATE_ID "")
 FetchContent_MakeAvailable(mbedtls)
 set(CMAKE_C_SIMULATE_ID "${_gd_rtc_simulate_id}")
-# Mbed TLS can append MSVC-style /W flags to the cache while configured under
-# Geode's clang toolchain. Do not leak those flags into libdatachannel's C deps.
-set(CMAKE_C_FLAGS "${_gd_rtc_c_flags}")
-set(CMAKE_C_FLAGS "${_gd_rtc_c_flags_cache}" CACHE STRING "" FORCE)
+# The Geode Windows toolchain invokes clang.exe, not clang-cl. MSVC-style
+# /W and /wd flags are invalid for C sources in libdatachannel's dependencies.
+# This mod has no C sources, so leave third-party C compilation on clang defaults.
+set(CMAKE_C_FLAGS "")
+set(CMAKE_C_FLAGS "" CACHE STRING "" FORCE)
 if(TARGET mbedtls AND NOT TARGET MbedTLS::MbedTLS)
     add_library(MbedTLS::MbedTLS ALIAS mbedtls)
 endif()
