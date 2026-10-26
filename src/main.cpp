@@ -538,7 +538,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         menu->addChild(createBtn);
 
         auto joinBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Join Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
+            ButtonSprite::create("Join", 72, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onJoinRoom));
         joinBtn->setID("gd-rtc-join");
         joinBtn->setPosition({18, 0});
