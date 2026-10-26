@@ -353,7 +353,18 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
             input->setEnabled(!inRoom);
-            if (inRoom) input->setString(g_activeRoomCode);
+            input->setVisible(!inRoom);
+        }
+        if (auto codeLabel = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-code-label"))) {
+            codeLabel->setVisible(inRoom);
+            if (inRoom) codeLabel->setString(("ROOM CODE  " + g_activeRoomCode).c_str());
+        }
+        if (menu) {
+            if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({-75.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({75.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setPosition({0.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-leave")) item->setPosition({0.f, -40.f});
+            if (auto item = menu->getChildByID("gd-rtc-close")) item->setPosition({0.f, -80.f});
         }
         if (auto subtitle = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-subtitle"))) {
             subtitle->setString(inRoom ? "Share the code with friends" : "Create a room or enter a friend's code");
@@ -393,12 +404,20 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     void onGDRTC(CCObject*) {
         if (auto existing = this->getChildByID("gd-rtc-room-panel")) {
             existing->removeFromParent();
+            if (auto shade = this->getChildByID("gd-rtc-room-shade")) shade->removeFromParent();
             setBackgroundMenusEnabled(true);
             return;
         }
 
         setBackgroundMenusEnabled(false);
         auto win = CCDirector::sharedDirector()->getWinSize();
+        // Keep the dimmer in screen coordinates. Putting it inside the scaled
+        // panel used to shrink the "full-screen" shade on smaller displays.
+        auto shade = CCLayerColor::create({0, 0, 0, 185});
+        shade->setID("gd-rtc-room-shade");
+        shade->setContentSize(win);
+        shade->setPosition({0.f, 0.f});
+        this->addChild(shade, 999);
         auto panel = CCNode::create();
         panel->setID("gd-rtc-room-panel");
         panel->setZOrder(1000);
@@ -407,13 +426,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         panel->setScale(std::max(0.55f, uiScale));
         this->addChild(panel);
 
-        // Full-screen dimmer plus a distinct opaque panel makes the room UI readable
-        // regardless of the menu artwork behind it.
-        auto shade = CCLayerColor::create({0, 0, 0, 185});
-        shade->setContentSize(win);
-        shade->setPosition({-win.width / 2, -win.height / 2});
-        panel->addChild(shade, -2);
-
+        // Compact opaque card over the screen-space dimmer.
         auto card = CCLayerColor::create({18, 27, 53, 248});
         card->setContentSize({360.f, 390.f});
         card->setPosition({-180.f, -195.f});
@@ -435,13 +448,20 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         subtitle->setPosition({0, 126.f});
         panel->addChild(subtitle);
 
-        auto input = geode::TextInput::create(190.f, "Room code");
+        auto input = geode::TextInput::create(190.f, "Enter 6-character room code");
         input->setID("gd-rtc-room-code-input");
         input->setCommonFilter(geode::CommonFilter::Alphanumeric);
         input->setMaxCharCount(6);
         input->setTextAlign(geode::TextInputAlign::Center);
         input->setPosition({0, 88.f});
         panel->addChild(input);
+
+        auto codeLabel = CCLabelBMFont::create("", "bigFont.fnt");
+        codeLabel->setID("gd-rtc-room-code-label");
+        codeLabel->setScale(0.72f);
+        codeLabel->setPosition({0.f, 88.f});
+        codeLabel->setVisible(false);
+        panel->addChild(codeLabel);
 
         auto membersBack = CCLayerColor::create({8, 14, 31, 220});
         membersBack->setContentSize({310.f, 104.f});
@@ -501,6 +521,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", 80, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCloseRooms));
+        closeBtn->setID("gd-rtc-close");
         closeBtn->setPosition({0, -80});
         menu->addChild(closeBtn);
 
@@ -518,6 +539,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
         this->unschedule(schedule_selector(GDRTCMenuLayer::pollSignaling));
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) panel->removeFromParent();
+        if (auto shade = this->getChildByID("gd-rtc-room-shade")) shade->removeFromParent();
         setBackgroundMenusEnabled(true);
     }
 
@@ -671,7 +693,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     void onRefreshMembers(CCObject*) {
         if (g_refreshPending) return;
         if (g_activeRoomCode.empty()) {
-            setRoomMembers("Players in room:\nCreate or join a room first.");
+            setRoomMembers("Your room members will appear here.");
             return;
         }
         g_refreshPending = true;
@@ -694,7 +716,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     return;
                 }
                 auto members = parsed.unwrap();
-                std::string names = "Players in room:";
+                std::string names = "Players in room";
                 unsigned int count = 0;
                 g_roomMemberIds.clear();
                 if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
@@ -733,7 +755,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     }
                     ++count;
                 }
-                if (!count) names += "\n—";
+                names += " (" + std::to_string(count + 1) + "/8)";
+                if (!count) names += "\nWaiting for friends to join";
                 self->setRoomMembers(names);
                 if (g_activeRoomCode == code) self->setRoomStatus("Room " + code + " · " + std::to_string(count + 1) + "/8 players");
             });
@@ -821,7 +844,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     }
                 }
                 self->updateRoomControls(false);
-                self->setRoomMembers("Players in room:\n—");
+                self->setRoomMembers("Players in room (1/8)\nWaiting for friends to join");
                 self->setRoomStatus("You left the room.");
 
                 // Remove the room record once its last member has left.
