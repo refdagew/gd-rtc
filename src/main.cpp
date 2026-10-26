@@ -32,6 +32,7 @@ namespace {
     std::string g_activeRoomCode;
     std::string g_activePeerId;
     bool g_refreshPending = false;
+    double g_lastManualRefreshAt = 0.0;
     bool g_roomOperationPending = false;
     std::map<std::string, std::string> g_peerNames;
     std::map<std::string, CCNode*> g_remoteAvatars;
@@ -385,7 +386,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (menu) {
             if (auto item = menu->getChildByID("gd-rtc-create")) item->setVisible(!inRoom);
             if (auto item = menu->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
-            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(false);
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
@@ -399,7 +400,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (menu) {
             if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({0.f, 0.f});
             if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({-76.f, -40.f});
-            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(false);
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setPosition({100.f, 66.f});
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setPosition({0.f, -164.f});
             if (auto item = menu->getChildByID("gd-rtc-close")) item->setVisible(true);
         }
@@ -559,7 +561,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         menu->addChild(joinBtn);
 
         auto refreshBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Refresh Players", 115, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .58f),
+            ButtonSprite::create("Update", 88, true, "bigFont.fnt", "GJ_button_01.png", 22.f, .58f),
             this, menu_selector(GDRTCMenuLayer::onRefreshMembers));
         refreshBtn->setID("gd-rtc-refresh");
         refreshBtn->setPosition({-68, -40});
@@ -748,7 +750,22 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         }
     }
 
-    void onRefreshMembers(CCObject*) {
+    void restoreRefreshButton(float) {
+        auto panel = this->getChildByID("gd-rtc-room-panel");
+        auto menu = panel ? panel->getChildByID("gd-rtc-room-panel-menu") : nullptr;
+        if (menu) if (auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(menu->getChildByID("gd-rtc-refresh"))) item->setEnabled(true);
+    }
+
+    void onRefreshMembers(CCObject* sender) {
+        if (sender) {
+            auto now = nowSeconds();
+            if (now - g_lastManualRefreshAt < 1.0) return;
+            g_lastManualRefreshAt = now;
+            if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
+                if (auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(panel->getChildByID("gd-rtc-room-panel-menu")->getChildByID("gd-rtc-refresh"))) item->setEnabled(false);
+            }
+            this->scheduleOnce(schedule_selector(GDRTCMenuLayer::restoreRefreshButton), 1.f);
+        }
         if (g_refreshPending) return;
         if (g_activeRoomCode.empty()) {
             setRoomMembers("Your room members will appear here.");
@@ -1065,12 +1082,14 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             packet.precision(6);
             int iconType = static_cast<int>(IconType::Cube);
             if (p1->m_isShip) iconType = static_cast<int>(IconType::Ship);
+            // In platformer mode, the ship-like movement is represented by the jetpack icon.
             else if (p1->m_isBall) iconType = static_cast<int>(IconType::Ball);
             else if (p1->m_isBird) iconType = static_cast<int>(IconType::Ufo);
             else if (p1->m_isDart) iconType = static_cast<int>(IconType::Wave);
             else if (p1->m_isRobot) iconType = static_cast<int>(IconType::Robot);
             else if (p1->m_isSpider) iconType = static_cast<int>(IconType::Spider);
             else if (p1->m_isSwing) iconType = static_cast<int>(IconType::Swing);
+            if (this->m_level->isPlatformer() && p1->m_isShip) iconType = 8; // IconType::Jetpack
             // getPlayerFrame() is always the cube selection. Select the
             // correct icon ID for the player's current gamemode before sending it.
             int activeIcon = gm->getPlayerFrame();
@@ -1082,6 +1101,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 case IconType::Robot: activeIcon = gm->getPlayerRobot(); break;
                 case IconType::Spider: activeIcon = gm->getPlayerSpider(); break;
                 case IconType::Swing: activeIcon = gm->getPlayerSwing(); break;
+                case static_cast<IconType>(8): activeIcon = gm->getPlayerJetpack(); break;
                 default: break;
             }
             packet << "S|" << pos1.x << "|" << pos1.y << "|" << p1->getRotation()
@@ -1127,7 +1147,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 auto visual = SimplePlayer::create(icon);
                 if (!visual) continue;
                 visual->updatePlayerFrame(icon, static_cast<IconType>(iconType));
-                visual->setScale(0.72f);
+                visual->setScale(1.0f);
                 visual->setID(("gd-rtc-remote-" + remoteId).c_str());
                 visual->setAnchorPoint({0.5f, 0.5f});
                 worldLayer->addChild(visual, this->m_player1->getZOrder() + 1);
@@ -1137,7 +1157,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 auto secondary = SimplePlayer::create(icon);
                 if (secondary) {
                     secondary->updatePlayerFrame(icon, static_cast<IconType>(iconType));
-                    secondary->setScale(0.72f);
+                    secondary->setScale(1.0f);
                     secondary->setID(("gd-rtc-remote-secondary-" + remoteId).c_str());
                     secondary->setVisible(false);
                     worldLayer->addChild(secondary, this->m_player1->getZOrder() + 1);
@@ -1327,6 +1347,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
             if (auto node = menu->getChildByID("gd-rtc-pause-create")) node->setVisible(!inRoom);
             if (auto node = menu->getChildByID("gd-rtc-pause-join")) node->setVisible(!inRoom);
             if (auto node = menu->getChildByID("gd-rtc-pause-leave")) node->setVisible(inRoom);
+            if (auto node = menu->getChildByID("gd-rtc-pause-refresh")) node->setVisible(inRoom);
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-pause-code-input"))) {
             input->setVisible(!inRoom);
@@ -1429,6 +1450,12 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         join->setID("gd-rtc-pause-join");
         join->setPosition({-76.f, -40.f});
         actions->addChild(join);
+        auto refresh = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Update", 88, true, "bigFont.fnt", "GJ_button_01.png", 22.f, .58f),
+            this, menu_selector(GDRTCPauseLayer::onPauseRefreshMembers));
+        refresh->setID("gd-rtc-pause-refresh");
+        refresh->setPosition({100.f, 66.f});
+        actions->addChild(refresh);
         auto leave = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Leave Room", 120, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .62f),
             this, menu_selector(GDRTCPauseLayer::onPauseLeaveRoom));
@@ -1576,7 +1603,22 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
             });
     }
 
-    void onPauseRefreshMembers(CCObject*) {
+    void restorePauseRefreshButton(float) {
+        auto panel = this->getChildByID("gd-rtc-pause-room-panel");
+        auto actions = panel ? panel->getChildByID("gd-rtc-pause-room-actions") : nullptr;
+        if (actions) if (auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(actions->getChildByID("gd-rtc-pause-refresh"))) item->setEnabled(true);
+    }
+
+    void onPauseRefreshMembers(CCObject* sender) {
+        if (sender) {
+            auto now = nowSeconds();
+            if (now - g_lastManualRefreshAt < 1.0) return;
+            g_lastManualRefreshAt = now;
+            auto panel = this->getChildByID("gd-rtc-pause-room-panel");
+            auto actions = panel ? panel->getChildByID("gd-rtc-pause-room-actions") : nullptr;
+            if (actions) if (auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(actions->getChildByID("gd-rtc-pause-refresh"))) item->setEnabled(false);
+            this->scheduleOnce(schedule_selector(GDRTCPauseLayer::restorePauseRefreshButton), 1.f);
+        }
         if (g_refreshPending || g_activeRoomCode.empty()) return;
         g_refreshPending = true;
         auto code = g_activeRoomCode;
