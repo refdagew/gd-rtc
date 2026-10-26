@@ -37,7 +37,7 @@ jobs:
         id: build
         uses: geode-sdk/build-geode-mod@main
         with:
-          sdk: given
+          sdk: v5.11.2
           target: ${{ matrix.platform.target }}
           use-lto: false
 
