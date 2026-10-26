@@ -1244,22 +1244,399 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         menu->setScale(std::min(1.0f, std::max(0.65f, win.width / 800.f)));
         this->addChild(menu, 1000);
 
-        auto share = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Share Level", 108, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .58f),
-            this, menu_selector(GDRTCPauseLayer::onShareCurrentLevel));
-        share->setPosition({0.f, 18.f});
-        menu->addChild(share);
+        auto room = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("GD-RTC", 108, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .62f),
+            this, menu_selector(GDRTCPauseLayer::onOpenRoomMenu));
+        room->setPosition({0.f, 18.f});
+        menu->addChild(room);
+    }
 
-        auto open = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Open Shared", 108, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
-            this, menu_selector(GDRTCPauseLayer::onOpenSharedLevel));
-        open->setPosition({0.f, -20.f});
-        menu->addChild(open);
-        auto saved = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Saved Levels", 108, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .58f),
-            this, menu_selector(GDRTCPauseLayer::onOpenSavedLevels));
-        saved->setPosition({0.f, -58.f});
-        menu->addChild(saved);
+    void setPauseMenusEnabled(CCNode* node, bool enabled, CCNode* skip) {
+        if (!node || node == skip) return;
+        if (auto menu = typeinfo_cast<CCMenu*>(node)) menu->setTouchEnabled(enabled);
+        auto children = node->getChildren();
+        if (!children) return;
+        for (unsigned int i = 0; i < children->count(); ++i) {
+            setPauseMenusEnabled(typeinfo_cast<CCNode*>(children->objectAtIndex(i)), enabled, skip);
+        }
+    }
+
+    void setPauseRoomStatus(std::string const& message) {
+        if (auto panel = this->getChildByID("gd-rtc-pause-room-panel")) {
+            if (auto label = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-room-status"))) label->setString(message.c_str());
+        }
+    }
+
+    void updatePauseRoomControls() {
+        auto panel = this->getChildByID("gd-rtc-pause-room-panel");
+        if (!panel) return;
+        bool inRoom = !g_activeRoomCode.empty();
+        if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-pause-room-actions"))) {
+            if (auto node = menu->getChildByID("gd-rtc-pause-create")) node->setVisible(!inRoom);
+            if (auto node = menu->getChildByID("gd-rtc-pause-join")) node->setVisible(!inRoom);
+            if (auto node = menu->getChildByID("gd-rtc-pause-leave")) node->setVisible(inRoom);
+        }
+        if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-pause-code-input"))) {
+            input->setVisible(!inRoom);
+            input->setEnabled(!inRoom);
+        }
+        if (auto code = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-code-label"))) {
+            code->setVisible(inRoom);
+            if (inRoom) code->setString(("Room " + g_activeRoomCode).c_str());
+        }
+        for (auto id : {"gd-rtc-pause-players-title", "gd-rtc-pause-self-name", "gd-rtc-pause-self-state", "gd-rtc-pause-member-menu", "gd-rtc-pause-members-back"}) {
+            if (auto node = panel->getChildByID(id)) node->setVisible(inRoom);
+        }
+        if (auto subtitle = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-subtitle"))) {
+            subtitle->setString(inRoom ? "Invite friends with this room code" : "Create a room or join with a 5-digit code");
+        }
+    }
+
+    void onOpenRoomMenu(CCObject*) {
+        if (this->getChildByID("gd-rtc-pause-room-panel")) return;
+        setPauseMenusEnabled(this, false, nullptr);
+        auto win = CCDirector::sharedDirector()->getWinSize();
+        auto shade = CCLayerColor::create({0, 0, 0, 190});
+        shade->setID("gd-rtc-pause-room-shade");
+        shade->setContentSize(win);
+        this->addChild(shade, 1998);
+        auto panel = CCNode::create();
+        panel->setID("gd-rtc-pause-room-panel");
+        panel->setPosition({win.width / 2, win.height / 2});
+        panel->setScale(std::max(0.55f, std::min(1.0f, std::min((win.width - 24.f) / 360.f, (win.height - 24.f) / 420.f))));
+        this->addChild(panel, 1999);
+        auto card = CCLayerColor::create({18, 27, 53, 248});
+        card->setContentSize({360.f, 420.f});
+        card->setPosition({-180.f, -210.f});
+        panel->addChild(card);
+        auto accent = CCLayerColor::create({65, 190, 255, 255});
+        accent->setContentSize({340.f, 3.f});
+        accent->setPosition({-170.f, 205.f});
+        panel->addChild(accent);
+        auto title = CCLabelBMFont::create("GD-RTC", "bigFont.fnt");
+        title->setScale(0.86f);
+        title->setPosition({0, 171.f});
+        panel->addChild(title);
+        auto subtitle = CCLabelBMFont::create("Create a room or join with a 5-digit code", "goldFont.fnt");
+        subtitle->setID("gd-rtc-pause-subtitle");
+        subtitle->setScale(0.42f);
+        subtitle->setPosition({0, 143.f});
+        panel->addChild(subtitle);
+        auto input = geode::TextInput::create(150.f, "00000");
+        input->setID("gd-rtc-pause-code-input");
+        input->setCommonFilter(geode::CommonFilter::Uint);
+        input->setMaxCharCount(5);
+        input->setTextAlign(geode::TextInputAlign::Center);
+        input->setPosition({0, 100.f});
+        panel->addChild(input);
+        auto code = CCLabelBMFont::create("", "bigFont.fnt");
+        code->setID("gd-rtc-pause-code-label");
+        code->setScale(0.72f);
+        code->setPosition({0, 111.f});
+        code->setVisible(false);
+        panel->addChild(code);
+        auto membersBack = CCLayerColor::create({8, 14, 31, 220});
+        membersBack->setID("gd-rtc-pause-members-back");
+        membersBack->setContentSize({320.f, 218.f});
+        membersBack->setPosition({-160.f, -151.f});
+        panel->addChild(membersBack);
+        auto playersTitle = CCLabelBMFont::create("Players", "goldFont.fnt");
+        playersTitle->setID("gd-rtc-pause-players-title");
+        playersTitle->setScale(0.48f);
+        playersTitle->setPosition({-126.f, 72.f});
+        playersTitle->setAnchorPoint({0.f, 0.5f});
+        panel->addChild(playersTitle);
+        auto selfName = CCLabelBMFont::create("", "goldFont.fnt");
+        selfName->setID("gd-rtc-pause-self-name");
+        selfName->setAnchorPoint({0.f, 0.5f});
+        selfName->setScale(0.46f);
+        selfName->setPosition({-126.f, 48.f});
+        panel->addChild(selfName);
+        auto selfState = CCLabelBMFont::create("", "goldFont.fnt");
+        selfState->setID("gd-rtc-pause-self-state");
+        selfState->setAnchorPoint({0.f, 0.5f});
+        selfState->setScale(0.34f);
+        selfState->setPosition({-116.f, 34.f});
+        panel->addChild(selfState);
+        auto memberMenu = CCMenu::create();
+        memberMenu->setID("gd-rtc-pause-member-menu");
+        memberMenu->setPosition({0, 0});
+        panel->addChild(memberMenu);
+        auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
+        status->setID("gd-rtc-pause-room-status");
+        status->setScale(0.38f);
+        status->setPosition({0, -194.f});
+        panel->addChild(status);
+        auto actions = CCMenu::create();
+        actions->setID("gd-rtc-pause-room-actions");
+        actions->setPosition({0, 25.f});
+        panel->addChild(actions);
+        auto create = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
+            this, menu_selector(GDRTCPauseLayer::onPauseCreateRoom));
+        create->setID("gd-rtc-pause-create");
+        create->setPosition({-72.f, 0.f});
+        actions->addChild(create);
+        auto join = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Join", 72, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
+            this, menu_selector(GDRTCPauseLayer::onPauseJoinRoom));
+        join->setID("gd-rtc-pause-join");
+        join->setPosition({72.f, 0.f});
+        actions->addChild(join);
+        auto leave = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Leave Room", 120, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .62f),
+            this, menu_selector(GDRTCPauseLayer::onPauseLeaveRoom));
+        leave->setID("gd-rtc-pause-leave");
+        leave->setPosition({0.f, -164.f});
+        actions->addChild(leave);
+        auto closeSprite = CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png");
+        auto close = CCMenuItemSpriteExtra::create(closeSprite, this, menu_selector(GDRTCPauseLayer::onCloseRoomMenu));
+        auto closeMenu = CCMenu::create(close, nullptr);
+        closeMenu->setPosition({0, 0});
+        panel->addChild(closeMenu, 20);
+        close->setPosition({-160.f, 190.f});
+        close->setScale(0.72f);
+        updatePauseRoomControls();
+        this->schedule(schedule_selector(GDRTCPauseLayer::pollPauseRoom), 10.f);
+        this->schedule(schedule_selector(GDRTCPauseLayer::pollPauseSignaling), 1.f);
+        if (!g_activeRoomCode.empty()) onPauseRefreshMembers(nullptr);
+    }
+
+    void onCloseRoomMenu(CCObject*) {
+        this->unschedule(schedule_selector(GDRTCPauseLayer::pollPauseRoom));
+        this->unschedule(schedule_selector(GDRTCPauseLayer::pollPauseSignaling));
+        if (auto panel = this->getChildByID("gd-rtc-pause-room-panel")) panel->removeFromParent();
+        if (auto shade = this->getChildByID("gd-rtc-pause-room-shade")) shade->removeFromParent();
+        setPauseMenusEnabled(this, true, nullptr);
+    }
+
+    void pollPauseSignaling(float) {
+        if (!g_activeRoomCode.empty()) rtcPollSignals();
+    }
+
+    void pollPauseRoom(float) {
+        if (!this->getChildByID("gd-rtc-pause-room-panel")) {
+            this->unschedule(schedule_selector(GDRTCPauseLayer::pollPauseRoom));
+            this->unschedule(schedule_selector(GDRTCPauseLayer::pollPauseSignaling));
+            return;
+        }
+        if (!g_activeRoomCode.empty()) onPauseRefreshMembers(nullptr);
+    }
+
+    void onPauseCreateRoom(CCObject*) {
+        if (g_roomOperationPending) return;
+        g_roomOperationPending = true;
+        setPauseRoomStatus("Creating room...");
+        auto code = makeRoomCode();
+        auto peer = makePeerId();
+        auto now = nowSeconds();
+        matjson::Value room = matjson::Value::object();
+        room["code"] = code;
+        room["createdAt"] = now;
+        room["lastSeen"] = now;
+        room["protocol"] = 1;
+        room["members"] = matjson::Value::object();
+        matjson::Value member = matjson::Value::object();
+        member["name"] = playerName();
+        member["peerId"] = peer;
+        member["joinedAt"] = now;
+        member["lastSeen"] = now;
+        room["members"][peer] = member;
+        Ref<GDRTCPauseLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(12))
+            .bodyJSON(room).put(roomUrl(code)),
+            [self, code, peer](geode::utils::web::WebResponse response) {
+                g_roomOperationPending = false;
+                if (!response.ok()) { self->setPauseRoomStatus("Couldn't create room. Try again."); return; }
+                g_activeRoomCode = code;
+                g_activePeerId = peer;
+                self->updatePauseRoomControls();
+                self->setPauseRoomStatus("Room created.");
+                self->onPauseRefreshMembers(nullptr);
+            });
+    }
+
+    void onPauseJoinRoom(CCObject*) {
+        if (g_roomOperationPending) return;
+        auto panel = this->getChildByID("gd-rtc-pause-room-panel");
+        auto input = panel ? typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-pause-code-input")) : nullptr;
+        if (!input) return;
+        std::string code(input->getString().c_str());
+        if (code.size() != 5 || !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+            setPauseRoomStatus("Enter a 5-digit room code.");
+            return;
+        }
+        g_roomOperationPending = true;
+        setPauseRoomStatus("Joining room...");
+        auto peer = makePeerId();
+        auto now = nowSeconds();
+        Ref<GDRTCPauseLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(10))
+            .get(roomUrl(code, "/members")),
+            [self, code, peer, now](geode::utils::web::WebResponse response) {
+                if (!response.ok()) { g_roomOperationPending = false; self->setPauseRoomStatus("Room not found."); return; }
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) { g_roomOperationPending = false; self->setPauseRoomStatus("Room not found."); return; }
+                unsigned int count = 0;
+                for (auto const& [id, value] : parsed.unwrap()) { (void)id; (void)value; ++count; }
+                if (count >= 8) { g_roomOperationPending = false; self->setPauseRoomStatus("Room is full."); return; }
+                matjson::Value member = matjson::Value::object();
+                member["name"] = playerName();
+                member["peerId"] = peer;
+                member["joinedAt"] = now;
+                member["lastSeen"] = now;
+                async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(10))
+                    .bodyJSON(member).put(roomUrl(code, "/members/" + peer)),
+                    [self, code, peer](geode::utils::web::WebResponse joined) {
+                        g_roomOperationPending = false;
+                        if (!joined.ok()) { self->setPauseRoomStatus("Couldn't join room."); return; }
+                        g_activeRoomCode = code;
+                        g_activePeerId = peer;
+                        self->updatePauseRoomControls();
+                        self->setPauseRoomStatus("Joined room.");
+                        self->onPauseRefreshMembers(nullptr);
+                    });
+            });
+    }
+
+    void onPauseLeaveRoom(CCObject*) {
+        if (g_activeRoomCode.empty() || g_activePeerId.empty()) return;
+        auto code = g_activeRoomCode;
+        auto peer = g_activePeerId;
+        Ref<GDRTCPauseLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(8))
+            .send("DELETE", roomUrl(code, "/members/" + peer)),
+            [self, code, peer](geode::utils::web::WebResponse response) {
+                if (!response.ok()) { self->setPauseRoomStatus("Couldn't leave room."); return; }
+                rtcCloseAllPeers();
+                g_activeRoomCode.clear();
+                g_activePeerId.clear();
+                g_peerNames.clear();
+                g_roomMemberIds.clear();
+                self->updatePauseRoomControls();
+                self->setPauseRoomStatus("Left room.");
+                async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(6))
+                    .get(roomUrl(code)),
+                    [code](geode::utils::web::WebResponse roomResponse) {
+                        if (!roomResponse.ok()) return;
+                        auto parsed = roomResponse.json();
+                        if (!parsed || parsed.unwrap().isNull()) return;
+                        bool empty = true;
+                        for (auto const& [id, value] : parsed.unwrap()["members"]) { (void)id; (void)value; empty = false; break; }
+                        if (empty) async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(6))
+                            .send("DELETE", roomUrl(code)), [](geode::utils::web::WebResponse) {});
+                    });
+            });
+    }
+
+    void onPauseRefreshMembers(CCObject*) {
+        if (g_refreshPending || g_activeRoomCode.empty()) return;
+        g_refreshPending = true;
+        auto code = g_activeRoomCode;
+        Ref<GDRTCPauseLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(8))
+            .get(roomUrl(code, "/members")),
+            [self, code](geode::utils::web::WebResponse response) {
+                g_refreshPending = false;
+                if (!response.ok() || g_activeRoomCode != code) return;
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) { self->setPauseRoomStatus("Room no longer exists."); return; }
+                auto members = parsed.unwrap();
+                auto panel = self->getChildByID("gd-rtc-pause-room-panel");
+                if (!panel) return;
+                if (auto title = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-players-title"))) title->setString(("Players (" + std::to_string(members.size()) + "/8)").c_str());
+                if (auto own = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-self-name"))) own->setString((playerName() + " (you)").c_str());
+                if (auto ownState = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-self-state"))) {
+                    auto play = PlayLayer::get();
+                    if (play && play->m_level) {
+                        auto name = std::string(play->m_level->m_levelName.c_str());
+                        if (name.size() > 28) name.resize(28);
+                        ownState->setString(("PLAYING " + name + " (" + std::to_string(static_cast<int>(play->m_level->m_levelID)) + ")").c_str());
+                    } else ownState->setString("");
+                }
+                if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-pause-member-menu"))) {
+                    menu->removeAllChildren();
+                    g_roomMemberIds.clear();
+                    unsigned int row = 0;
+                    for (auto const& [id, member] : members) {
+                        if (id == g_activePeerId) continue;
+                        if (row >= 7) break;
+                        auto nameValue = member["name"].asString();
+                        std::string name = nameValue ? nameValue.unwrap() : "Player";
+                        auto state = member["currentLevel"];
+                        auto level = state["name"].asString();
+                        auto levelId = state["levelID"].asInt();
+                        auto type = state["levelType"].asString();
+                        auto updated = state["updatedAt"].asDouble();
+                        bool playing = level && levelId && updated && nowSeconds() - updated.unwrap() < 35.0;
+                        std::string detail;
+                        if (playing) {
+                            auto ln = level.unwrap();
+                            if (ln.size() > 26) ln.resize(26);
+                            detail = "PLAYING " + ln + " (" + std::to_string(levelId.unwrap()) + ")";
+                            if (type) detail += " [" + type.unwrap() + "]";
+                        }
+                        g_roomMemberIds.push_back(id);
+                        auto nameLabel = CCLabelBMFont::create(name.c_str(), "goldFont.fnt");
+                        nameLabel->setAnchorPoint({0.f, 0.5f});
+                        nameLabel->setScale(0.34f);
+                        nameLabel->setPosition({-126.f, 24.f - row * 22.f});
+                        menu->addChild(nameLabel);
+                        auto detailLabel = CCLabelBMFont::create(detail.c_str(), "goldFont.fnt");
+                        detailLabel->setAnchorPoint({0.f, 0.5f});
+                        detailLabel->setScale(0.25f);
+                        detailLabel->setPosition({-116.f, 14.f - row * 22.f});
+                        menu->addChild(detailLabel);
+                        auto join = CCMenuItemSpriteExtra::create(
+                            ButtonSprite::create("Join", 68, true, "bigFont.fnt", playing ? "GJ_button_01.png" : "GJ_button_04.png", 22.f, .58f),
+                            self, menu_selector(GDRTCPauseLayer::onPauseJoinPlayer));
+                        join->setTag(static_cast<int>(g_roomMemberIds.size() - 1));
+                        join->setPosition({119.f, 20.f - row * 22.f});
+                        join->setEnabled(playing);
+                        menu->addChild(join);
+                        rtcEnsurePeer(id);
+                        if (nameValue) g_peerNames[id] = nameValue.unwrap();
+                        ++row;
+                    }
+                }
+                self->setPauseRoomStatus("Room " + code);
+            });
+    }
+
+    void onPauseJoinPlayer(CCObject* sender) {
+        auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(sender);
+        if (!item || g_activeRoomCode.empty()) return;
+        auto index = item->getTag();
+        if (index < 0 || static_cast<size_t>(index) >= g_roomMemberIds.size()) return;
+        auto code = g_activeRoomCode;
+        auto peer = g_roomMemberIds[static_cast<size_t>(index)];
+        Ref<GDRTCPauseLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(12))
+            .get(roomUrl(code, "/levels/" + peer)),
+            [self, code](geode::utils::web::WebResponse response) {
+                if (!response.ok() || g_activeRoomCode != code) { self->setPauseRoomStatus("Level isn't available yet."); return; }
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) { self->setPauseRoomStatus("Level isn't available yet."); return; }
+                auto item = parsed.unwrap();
+                auto nameValue = item["name"].asString();
+                auto dataValue = item["levelData"].asString();
+                auto idValue = item["levelID"].asInt();
+                auto typeValue = item["levelType"].asString();
+                std::string name = nameValue ? nameValue.unwrap() : "Shared level";
+                std::string data = dataValue ? dataValue.unwrap() : "";
+                GJGameLevel* level = nullptr;
+                if (typeValue && typeValue.unwrap() == "main" && idValue)
+                    level = GameLevelManager::sharedState()->getMainLevel(static_cast<int>(idValue.unwrap()), false);
+                if (!level && !data.empty()) {
+                    level = GJGameLevel::create();
+                    level->m_levelName = name.c_str();
+                    level->m_levelString = data.c_str();
+                    level->m_levelID = idValue ? static_cast<int>(idValue.unwrap()) : 0;
+                }
+                if (!level) { self->setPauseRoomStatus("Level data isn't available."); return; }
+                auto scene = PlayLayer::scene(level, false, false);
+                if (scene) CCDirector::sharedDirector()->pushScene(scene);
+            });
     }
 
     void onShareCurrentLevel(CCObject*) {
