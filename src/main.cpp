@@ -1163,7 +1163,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 progressIt->second->setVisible(classic);
                 if (classic) {
                     auto width = this->m_progressBar->getContentSize().width;
-                    progressIt->second->setPosition({width * std::clamp(percent, 0.f, 100.f) / 100.f, -11.f});
+                    progressIt->second->setPosition({width * (std::clamp(percent, 0.f, 100.f) / 100.f - 0.5f), -11.f});
                     if (auto simple = typeinfo_cast<SimplePlayer*>(progressIt->second)) {
                         simple->updatePlayerFrame(icon, static_cast<IconType>(iconType));
                         auto gm = GameManager::sharedState();
@@ -1562,7 +1562,10 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
                     if (play && play->m_level) {
                         auto name = std::string(play->m_level->m_levelName.c_str());
                         if (name.size() > 28) name.resize(28);
-                        ownState->setString(("PLAYING " + name + " (" + std::to_string(static_cast<int>(play->m_level->m_levelID)) + ")").c_str());
+                        auto levelID = static_cast<int>(play->m_level->m_levelID);
+                        auto levelTypeValue = static_cast<int>(play->m_level->m_levelType);
+                        std::string typeName = levelTypeValue == 1 ? "main" : (levelTypeValue == 4 ? "online" : "custom");
+                        ownState->setString(("PLAYING " + name + " (" + std::to_string(levelID) + ") [" + typeName + "]").c_str());
                     } else ownState->setString("");
                 }
                 if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-pause-member-menu"))) {
