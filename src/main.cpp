@@ -153,10 +153,15 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         input->setPosition({0, 88.f});
         panel->addChild(input);
 
+        auto membersBack = CCLayerColor::create({8, 14, 31, 220});
+        membersBack->setContentSize({310.f, 104.f});
+        membersBack->setPosition({-155.f, -32.f});
+        panel->addChild(membersBack, 0);
+
         auto members = CCLabelBMFont::create("Players in room:\n—", "goldFont.fnt");
         members->setID("gd-rtc-room-members");
         members->setScale(0.42f);
-        members->setPosition({0, 23.f});
+        members->setPosition({0, 21.f});
         panel->addChild(members);
 
         auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
