@@ -810,6 +810,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         static std::string lastPublishedLevelKey;
         static double lastStateSendAt = 0.0;
         static double lastSignalPollAt = 0.0;
+        static double lastPeerDiscoveryAt = 0.0;
         auto now = nowSeconds();
         auto code = g_activeRoomCode;
         auto peer = g_activePeerId;
@@ -834,6 +835,25 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         if (now - lastSignalPollAt >= 1.0) {
             lastSignalPollAt = now;
             rtcPollSignals();
+        }
+
+        // Discover new room members occasionally, never at gameplay frame rate.
+        if (now - lastPeerDiscoveryAt >= 5.0) {
+            lastPeerDiscoveryAt = now;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .get(roomUrl(code, "/members")),
+                [code, peer](geode::utils::web::WebResponse response) {
+                    if (!response.ok() || g_activeRoomCode != code || g_activePeerId != peer) return;
+                    auto parsed = response.json();
+                    if (!parsed || parsed.unwrap().isNull()) return;
+                    for (auto const& [id, member] : parsed.unwrap()) {
+                        if (id == peer) continue;
+                        auto name = member["name"].asString();
+                        g_peerNames[id] = name ? name.unwrap() : "Player";
+                        rtcEnsurePeer(id);
+                    }
+                });
         }
 
         if (now - lastStateSendAt >= (1.0 / 60.0)) {
