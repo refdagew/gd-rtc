@@ -4,6 +4,7 @@
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
 #include <chrono>
+#include <algorithm>
 #include <cctype>
 #include <random>
 #include <string>
@@ -77,6 +78,22 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         return true;
     }
 
+    void updateRoomControls(bool inRoom) {
+        auto panel = this->getChildByID("gd-rtc-room-panel");
+        if (!panel) return;
+        if (auto item = panel->getChildByID("gd-rtc-create")) item->setVisible(!inRoom);
+        if (auto item = panel->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
+        if (auto item = panel->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
+        if (auto item = panel->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
+        if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
+            input->setEnabled(!inRoom);
+            if (inRoom) input->setString(g_activeRoomCode);
+        }
+        if (auto subtitle = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-subtitle"))) {
+            subtitle->setString(inRoom ? "Share the code with friends" : "Create a room or enter a friend's code");
+        }
+    }
+
     void setRoomStatus(std::string const& message) {
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
             if (auto status = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-status"))) {
@@ -116,6 +133,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         panel->setID("gd-rtc-room-panel");
         panel->setZOrder(1000);
         panel->setPosition({win.width / 2, win.height / 2});
+        auto uiScale = std::min(1.0f, std::min((win.width - 24.f) / 360.f, (win.height - 24.f) / 390.f));
+        panel->setScale(std::max(0.55f, uiScale));
         this->addChild(panel);
 
         // Full-screen dimmer plus a distinct opaque panel makes the room UI readable
@@ -140,7 +159,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         title->setPosition({0, 154.f});
         panel->addChild(title);
 
-        auto subtitle = CCLabelBMFont::create("Play together online", "goldFont.fnt");
+        auto subtitle = CCLabelBMFont::create("Create a room or enter a friend's code", "goldFont.fnt");
+        subtitle->setID("gd-rtc-subtitle");
         subtitle->setScale(0.42f);
         subtitle->setPosition({0, 126.f});
         panel->addChild(subtitle);
@@ -178,24 +198,28 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto createBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCreateRoom));
+        createBtn->setID("gd-rtc-create");
         createBtn->setPosition({-75, 0});
         menu->addChild(createBtn);
 
         auto joinBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Join Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onJoinRoom));
+        joinBtn->setID("gd-rtc-join");
         joinBtn->setPosition({75, 0});
         menu->addChild(joinBtn);
 
         auto refreshBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Refresh Players", 115, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .58f),
             this, menu_selector(GDRTCMenuLayer::onRefreshMembers));
+        refreshBtn->setID("gd-rtc-refresh");
         refreshBtn->setPosition({-68, -40});
         menu->addChild(refreshBtn);
 
         auto leaveBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Leave", 75, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onLeaveRoom));
+        leaveBtn->setID("gd-rtc-leave");
         leaveBtn->setPosition({70, -40});
         menu->addChild(leaveBtn);
 
@@ -205,6 +229,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         closeBtn->setPosition({0, -80});
         menu->addChild(closeBtn);
 
+        updateRoomControls(!g_activeRoomCode.empty());
         this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 10.0f);
         if (!g_activeRoomCode.empty()) {
             input->setString(g_activeRoomCode);
@@ -273,6 +298,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 }
                 g_activeRoomCode = code;
                 g_activePeerId = peer;
+                self->updateRoomControls(true);
                 if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
                     if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) input->setString(code);
                 }
@@ -338,6 +364,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                         }
                         g_activeRoomCode = code;
                         g_activePeerId = peer;
+                        self->updateRoomControls(true);
                         self->setRoomStatus("Joined room " + code + ".");
                         self->onRefreshMembers(nullptr);
                     });
@@ -432,6 +459,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     g_activeRoomCode.clear();
                     g_activePeerId.clear();
                 }
+                self->updateRoomControls(false);
                 self->setRoomMembers("Players in room:\n—");
                 self->setRoomStatus("You left the room.");
 
