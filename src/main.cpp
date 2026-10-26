@@ -13,6 +13,7 @@
 #include <random>
 #include <map>
 #include <string>
+#include <vector>
 
 using namespace geode::prelude;
 
@@ -26,6 +27,7 @@ namespace {
     bool g_stateSendPending = false;
     bool g_statePollPending = false;
     std::map<std::string, CCNode*> g_remoteAvatars;
+    std::vector<std::string> g_roomMemberIds;
 
     double nowSeconds() {
         return std::chrono::duration<double>(
@@ -210,11 +212,16 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         membersBack->setPosition({-155.f, -32.f});
         panel->addChild(membersBack, 0);
 
-        auto members = CCLabelBMFont::create("Players in room:\n—", "goldFont.fnt");
+        auto members = CCLabelBMFont::create("Players in room:", "goldFont.fnt");
         members->setID("gd-rtc-room-members");
         members->setScale(0.42f);
-        members->setPosition({0, 21.f});
+        members->setPosition({0, 59.f});
         panel->addChild(members);
+
+        auto memberMenu = CCMenu::create();
+        memberMenu->setID("gd-rtc-member-menu");
+        memberMenu->setPosition({0, 0});
+        panel->addChild(memberMenu);
 
         auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
         status->setID("gd-rtc-room-status");
@@ -462,28 +469,87 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 auto members = data["members"];
                 std::string names = "Players in room:";
                 unsigned int count = 0;
+                g_roomMemberIds.clear();
+                if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
+                    if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-member-menu"))) menu->removeAllChildren();
+                }
                 for (auto const& [id, value] : members) {
-                    (void)id;
-                    if (count >= 8) break;
+                    if (id == g_activePeerId) continue;
+                    if (count >= 5) break;
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
-                    if (name.size() > 20) name.resize(20);
-                    names += "\n• " + name;
+                    if (name.size() > 16) name.resize(16);
                     auto state = value["state"];
                     auto level = state["levelName"].asString();
                     auto percent = state["percent"].asDouble();
                     auto updated = state["updatedAt"].asDouble();
+                    std::string row = name;
                     if (level && updated && nowSeconds() - updated.unwrap() < 3.0) {
                         std::string levelName = level.unwrap();
-                        if (levelName.size() > 16) levelName.resize(16);
-                        names += " — " + levelName;
-                        if (percent) names += " " + std::to_string(static_cast<int>(percent.unwrap())) + "%";
+                        if (levelName.size() > 14) levelName.resize(14);
+                        row += " — " + levelName;
+                        if (percent) row += " " + std::to_string(static_cast<int>(percent.unwrap())) + "%";
+                    } else {
+                        row += " — waiting for level";
+                    }
+                    g_roomMemberIds.push_back(id);
+                    if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
+                        if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-member-menu"))) {
+                            auto button = CCMenuItemSpriteExtra::create(
+                                ButtonSprite::create(row.c_str(), 275, true, "bigFont.fnt", "GJ_button_01.png", 20.f, .38f),
+                                self, menu_selector(GDRTCMenuLayer::onGoToPlayerLevel));
+                            button->setTag(static_cast<int>(g_roomMemberIds.size() - 1));
+                            button->setPosition({0.f, 39.f - static_cast<float>(count) * 20.f});
+                            menu->addChild(button);
+                        }
                     }
                     ++count;
                 }
                 if (!count) names += "\n—";
                 self->setRoomMembers(names);
-                if (g_activeRoomCode == code) self->setRoomStatus("Room " + code + " · " + std::to_string(count) + "/8 players");
+                if (g_activeRoomCode == code) self->setRoomStatus("Room " + code + " · " + std::to_string(count + 1) + "/8 players");
+            });
+    }
+
+    void onGoToPlayerLevel(CCObject* sender) {
+        auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(sender);
+        if (!item || g_activeRoomCode.empty()) return;
+        auto index = item->getTag();
+        if (index < 0 || static_cast<size_t>(index) >= g_roomMemberIds.size()) return;
+        auto code = g_activeRoomCode;
+        auto peer = g_roomMemberIds[static_cast<size_t>(index)];
+        setRoomStatus("Loading that player's level...");
+        Ref<GDRTCMenuLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(12))
+            .get(roomUrl(code, "/members/" + peer + "/level")),
+            [self, code](geode::utils::web::WebResponse response) {
+                if (g_activeRoomCode != code) return;
+                if (!response.ok()) {
+                    self->setRoomStatus("Couldn't load that player's level yet.");
+                    return;
+                }
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) {
+                    self->setRoomStatus("That player hasn't shared level data yet.");
+                    return;
+                }
+                auto nameValue = parsed.unwrap()["name"].asString();
+                auto dataValue = parsed.unwrap()["levelData"].asString();
+                if (!dataValue || dataValue.unwrap().empty()) {
+                    self->setRoomStatus("That player's level data isn't ready yet.");
+                    return;
+                }
+                std::string name = nameValue ? nameValue.unwrap() : "Shared level";
+                std::string data = dataValue.unwrap();
+                cacheSharedLevel(name, data);
+                auto level = GJGameLevel::create();
+                level->m_levelName = name.c_str();
+                level->m_levelString = data.c_str();
+                level->m_levelID = 0;
+                auto scene = PlayLayer::scene(level, false, false);
+                if (!scene) scene = LevelEditorLayer::scene(level, false);
+                if (scene) CCDirector::sharedDirector()->pushScene(scene);
             });
     }
 
@@ -550,6 +616,26 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         auto now = nowSeconds();
         auto code = g_activeRoomCode;
         auto peer = g_activePeerId;
+
+        // Publish the current level once per room/peer/level so room members can
+        // use the per-player Go button without uploading level data every frame.
+        static std::string lastPublishedLevelKey;
+        auto levelName = std::string(this->m_level->m_levelName.c_str());
+        auto levelData = std::string(this->m_level->m_levelString.c_str());
+        auto levelKey = code + "/" + peer + "/" + std::to_string(static_cast<int>(this->m_level->m_levelID)) + "/" + levelName;
+        if (levelKey != lastPublishedLevelKey && !levelData.empty() && levelData.size() < 950000) {
+            lastPublishedLevelKey = levelKey;
+            matjson::Value levelInfo = matjson::Value::object();
+            levelInfo["name"] = levelName;
+            levelInfo["levelData"] = levelData;
+            levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
+            levelInfo["updatedAt"] = now;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(12))
+                .bodyJSON(levelInfo)
+                .put(roomUrl(code, "/members/" + peer + "/level")),
+                [](geode::utils::web::WebResponse) {});
+        }
 
         if (now - lastSendAt >= 0.10 && !g_stateSendPending) {
             lastSendAt = now;
