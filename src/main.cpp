@@ -56,6 +56,16 @@ namespace {
         return std::string(kDatabaseUrl) + "/rooms/" + code + suffix + ".json";
     }
 
+    void openLevelEditor(std::string const& name, std::string const& data) {
+        if (name.empty() || data.empty()) return;
+        auto level = GJGameLevel::create();
+        level->m_levelName = name.c_str();
+        level->m_levelString = data.c_str();
+        level->m_levelID = 0;
+        auto scene = LevelEditorLayer::scene(level, false);
+        if (scene) CCDirector::sharedDirector()->pushScene(scene);
+    }
+
     void shareCurrentLevel() {
         if (g_activeRoomCode.empty() || g_activePeerId.empty()) return;
         auto playLayer = PlayLayer::get();
@@ -115,6 +125,10 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-open-level")) item->setVisible(inRoom);
+            if (auto item = menu->getChildByID("gd-rtc-saved-level")) {
+                auto cached = Mod::get()->getSavedValue<std::string>("saved-level-data", "");
+                item->setVisible(!inRoom && !cached.empty());
+            }
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
             input->setEnabled(!inRoom);
@@ -263,6 +277,13 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         openLevelBtn->setID("gd-rtc-open-level");
         openLevelBtn->setPosition({0, -30});
         menu->addChild(openLevelBtn);
+
+        auto savedLevelBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Saved Level", 115, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
+            this, menu_selector(GDRTCMenuLayer::onOpenSavedLevel));
+        savedLevelBtn->setID("gd-rtc-saved-level");
+        savedLevelBtn->setPosition({0, -30});
+        menu->addChild(savedLevelBtn);
 
         closeBtn->setPosition({0, -63});
         menu->addChild(closeBtn);
@@ -532,18 +553,26 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     self->setRoomStatus("The shared level data is invalid.");
                     return;
                 }
-                auto level = GJGameLevel::create();
-                level->m_levelName = nameResult.unwrap();
-                level->m_levelString = dataResult.unwrap();
-                level->m_levelID = 0;
-                auto scene = LevelEditorLayer::scene(level, false);
-                if (!scene) {
-                    self->setRoomStatus("Couldn't open that level.");
-                    return;
-                }
-                self->setRoomStatus("Opening " + std::string(nameResult.unwrap()) + "...");
-                CCDirector::sharedDirector()->pushScene(scene);
+                auto name = std::string(nameResult.unwrap());
+                auto data = std::string(dataResult.unwrap());
+                // Cache the latest downloaded level locally so it can be reopened later,
+                // even when the player is no longer in this room.
+                Mod::get()->setSavedValue<std::string>("saved-level-name", name);
+                Mod::get()->setSavedValue<std::string>("saved-level-data", data);
+                self->setRoomStatus("Opening " + name + "...");
+                openLevelEditor(name, data);
             });
+    }
+
+    void onOpenSavedLevel(CCObject*) {
+        auto name = Mod::get()->getSavedValue<std::string>("saved-level-name", "");
+        auto data = Mod::get()->getSavedValue<std::string>("saved-level-data", "");
+        if (data.empty()) {
+            setRoomStatus("No saved shared level yet.");
+            return;
+        }
+        setRoomStatus("Opening saved level...");
+        openLevelEditor(name.empty() ? "Shared level" : name, data);
     }
 
     void onLeaveRoom(CCObject*) {
