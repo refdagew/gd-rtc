@@ -51,6 +51,8 @@ namespace {
     std::mutex g_rtcMessagesMutex;
     std::deque<std::pair<std::string, std::string>> g_rtcMessages;
 
+    std::string roomUrl(std::string const& code, std::string const& suffix);
+
     std::shared_ptr<rtc::DataChannel> rtcGetChannel(std::shared_ptr<GDRTCPeerSession> const& session) {
         std::lock_guard<std::mutex> lock(session->channelMutex);
         return session->channel;
