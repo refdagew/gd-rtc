@@ -47,6 +47,8 @@ namespace {
         return name;
     }
 
+    std::string roomsUrl() { return std::string(kDatabaseUrl) + "/rooms.json"; }
+
     std::string roomUrl(std::string const& code, std::string const& suffix = "") {
         return std::string(kDatabaseUrl) + "/rooms/" + code + suffix + ".json";
     }
@@ -202,6 +204,28 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     void onCreateRoom(CCObject*) {
         if (!this->getChildByID("gd-rtc-room-panel")) return;
         setRoomStatus("Creating room...");
+        // Best-effort garbage collection for rooms abandoned for more than a day.
+        // Use a generous TTL so a long-running level is not mistaken for a dead room.
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(10))
+            .get(roomsUrl()),
+            [](geode::utils::web::WebResponse response) {
+                if (!response.ok()) return;
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) return;
+                auto rooms = parsed.unwrap();
+                auto now = nowSeconds();
+                for (auto const& [roomCode, room] : rooms) {
+                    auto lastSeenResult = room["lastSeen"].asDouble();
+                    double lastSeen = lastSeenResult ? lastSeenResult.unwrap() : 0.0;
+                    if (lastSeen > 0.0 && now - lastSeen > 86400.0) {
+                        async::spawn(geode::utils::web::WebRequest()
+                            .timeout(std::chrono::seconds(8))
+                            .send("DELETE", roomUrl(roomCode)),
+                            [](geode::utils::web::WebResponse) {});
+                    }
+                }
+            });
         auto code = makeRoomCode();
         auto peer = makePeerId();
         auto now = nowSeconds();
