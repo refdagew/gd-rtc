@@ -2,6 +2,7 @@
 #include <Geode/modify/MenuLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/utils/web.hpp>
+#include <Geode/modify/MenuLayer.hpp>
 #include <matjson.hpp>
 #include <chrono>
 #include <cctype>
@@ -50,8 +51,8 @@ namespace {
         std::string detail = body ? body.unwrap() : std::string(response.errorMessage());
         if (detail.empty()) detail = "No response body was returned.";
         if (detail.size() > 240) detail.resize(240);
-        return "Firebase request failed (HTTP " + std::to_string(response.code()) + ").\n" + detail +
-            "\n\nCheck that Firebase Realtime Database rules permit room reads and writes.";
+        (void)detail;
+        return "Couldn't connect to the room service. Please try again in a moment.";
     }
 }
 
@@ -59,19 +60,21 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) return false;
 
-        auto mainMenu = this->getChildByID("main-menu");
-        if (!mainMenu) {
-            log::warn("GD-RTC: main-menu node was not found; skipping menu button.");
+        auto bottomMenu = this->getChildByID("bottom-menu");
+        if (!bottomMenu) {
+            log::warn("GD-RTC: bottom-menu node was not found; skipping menu button.");
             return true;
         }
 
-        auto buttonSprite = ButtonSprite::create("GD-RTC", 90, true, "bigFont.fnt", "GJ_button_01.png", 30.0f, 0.8f);
-        if (!buttonSprite) return true;
-        auto button = CCMenuItemSpriteExtra::create(buttonSprite, this, menu_selector(GDRTCMenuLayer::onGDRTC));
+        auto icon = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
+        if (!icon) icon = CCSprite::createWithSpriteFrameName("GJ_achievementsBtn_001.png");
+        if (!icon) return true;
+        icon->setScale(0.82f);
+        auto button = CCMenuItemSpriteExtra::create(icon, this, menu_selector(GDRTCMenuLayer::onGDRTC));
         if (!button) return true;
         button->setID("gd-rtc-main-menu-button"_spr);
-        mainMenu->addChild(button);
-        if (auto menu = typeinfo_cast<CCMenu*>(mainMenu)) menu->updateLayout();
+        bottomMenu->addChild(button);
+        if (auto menu = typeinfo_cast<CCMenu*>(bottomMenu)) menu->updateLayout();
         return true;
     }
 
@@ -102,6 +105,12 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         subtitle->setPosition({win.width / 2, win.height / 2 + 63});
         panel->addChild(subtitle);
 
+        auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
+        status->setID("gd-rtc-room-status");
+        status->setScale(0.42f);
+        status->setPosition({win.width / 2, win.height / 2 - 104});
+        panel->addChild(status);
+
         auto input = geode::TextInput::create(190.f, "Room code");
         input->setID("gd-rtc-room-code-input");
         input->setCommonFilter(geode::CommonFilter::Alphanumeric);
@@ -129,7 +138,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", 80, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCloseRooms));
-        closeBtn->setPosition({0, -52});
+        closeBtn->setPosition({0, -68});
         menu->addChild(closeBtn);
     }
 
@@ -167,8 +176,12 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
             if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) input->setString(code);
         }
-        showMessage("Room created", "Your room code is:\n\n" + code +
-            "\n\nShare this code with your friend.\n\nNote: this milestone provides room signaling storage only; live player sync/WebRTC is not implemented yet.");
+        if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
+            if (auto status = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-status"))) {
+                auto text = "Room code: " + code + "  —  share it with your friend";
+                status->setString(text.c_str());
+            }
+        }
     }
 
     void onJoinRoom(CCObject*) {
@@ -214,6 +227,11 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             return;
         }
 
-        showMessage("Joined room " + code, "Room found and your guest entry was added.\n\nLive WebRTC gameplay synchronization and the in-room player list are the next implementation stage.");
+        if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
+            if (auto status = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-status"))) {
+                auto text = "Joined room " + code;
+                status->setString(text.c_str());
+            }
+        }
     }
 };
