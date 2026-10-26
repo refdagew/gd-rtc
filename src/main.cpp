@@ -467,8 +467,18 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     if (count >= 8) break;
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
-                    if (name.size() > 24) name.resize(24);
+                    if (name.size() > 20) name.resize(20);
                     names += "\n• " + name;
+                    auto state = value["state"];
+                    auto level = state["levelName"].asString();
+                    auto percent = state["percent"].asDouble();
+                    auto updated = state["updatedAt"].asDouble();
+                    if (level && updated && nowSeconds() - updated.unwrap() < 3.0) {
+                        std::string levelName = level.unwrap();
+                        if (levelName.size() > 16) levelName.resize(16);
+                        names += " — " + levelName;
+                        if (percent) names += " " + std::to_string(static_cast<int>(percent.unwrap())) + "%";
+                    }
                     ++count;
                 }
                 if (!count) names += "\n—";
@@ -560,7 +570,6 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             state["dual"] = p2 != nullptr;
             state["percent"] = this->getCurrentPercent();
             state["updatedAt"] = now;
-            state["paused"] = this->m_isPaused;
             async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(5))
                 .bodyJSON(state)
