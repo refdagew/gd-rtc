@@ -19,6 +19,12 @@ jobs:
           - name: Windows
             runner: windows-latest
             target: Win64
+          - name: macOS
+            runner: macos-latest
+            target: MacOS
+          - name: iOS
+            runner: macos-latest
+            target: iOS
           - name: Android64
             runner: ubuntu-latest
             target: Android64
