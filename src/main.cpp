@@ -10,6 +10,7 @@
 #include <matjson.hpp>
 #include <rtc/rtc.hpp>
 #include <chrono>
+#include <cstdio>
 #include <algorithm>
 #include <atomic>
 #include <cctype>
@@ -33,6 +34,7 @@ namespace {
     bool g_roomOperationPending = false;
     std::map<std::string, std::string> g_peerNames;
     std::map<std::string, CCNode*> g_remoteAvatars;
+    std::map<std::string, double> g_remoteAvatarLastSeen;
     struct GDRTCPeerSession {
         std::shared_ptr<rtc::PeerConnection> pc;
         std::shared_ptr<rtc::DataChannel> channel;
@@ -639,6 +641,9 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 }
                 for (auto const& [id, value] : members) {
                     if (id == g_activePeerId) continue;
+                    auto nameValue = value["name"].asString();
+                    g_peerNames[id] = nameValue ? nameValue.unwrap() : "Player";
+                    rtcEnsurePeer(id);
                     if (count >= 5) break;
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
@@ -737,6 +742,9 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 if (g_activeRoomCode == code && g_activePeerId == peer) {
                     g_activeRoomCode.clear();
                     g_activePeerId.clear();
+                    g_rtcPeers.clear();
+                    g_peerNames.clear();
+                    g_remoteAvatarLastSeen.clear();
                 }
                 self->updateRoomControls(false);
                 self->setRoomMembers("Players in room:\n—");
@@ -776,33 +784,140 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 class $modify(GDRTCPlayLayer, PlayLayer) {
     void postUpdate(float dt) {
         PlayLayer::postUpdate(dt);
-        if (g_activeRoomCode.empty() || !g_activePeerId.size() || !this->m_player1 || !this->m_level) return;
+        if (g_activeRoomCode.empty() || g_activePeerId.empty() || !this->m_player1 || !this->m_level) return;
 
+        static double lastPublishedLevelAt = 0.0;
         static std::string lastPublishedLevelKey;
+        static double lastStateSendAt = 0.0;
+        static double lastSignalPollAt = 0.0;
         auto now = nowSeconds();
         auto code = g_activeRoomCode;
         auto peer = g_activePeerId;
         auto levelName = std::string(this->m_level->m_levelName.c_str());
         auto levelData = std::string(this->m_level->m_levelString.c_str());
         auto levelKey = code + "/" + peer + "/" + std::to_string(static_cast<int>(this->m_level->m_levelID)) + "/" + levelName;
-        if (levelKey == lastPublishedLevelKey || levelData.empty() || levelData.size() > 950000) return;
-        lastPublishedLevelKey = levelKey;
+        if (levelKey != lastPublishedLevelKey && !levelData.empty() && levelData.size() <= 950000) {
+            lastPublishedLevelKey = levelKey;
+            matjson::Value levelInfo = matjson::Value::object();
+            levelInfo["name"] = levelName;
+            levelInfo["levelData"] = levelData;
+            levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
+            levelInfo["updatedAt"] = now;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(12))
+                .bodyJSON(levelInfo)
+                .put(roomUrl(code, "/members/" + peer + "/level")),
+                [](geode::utils::web::WebResponse) {});
+        }
 
-        matjson::Value levelInfo = matjson::Value::object();
-        levelInfo["name"] = levelName;
-        levelInfo["levelData"] = levelData;
-        levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
-        levelInfo["updatedAt"] = now;
-        async::spawn(geode::utils::web::WebRequest()
-            .timeout(std::chrono::seconds(12))
-            .bodyJSON(levelInfo)
-            .put(roomUrl(code, "/members/" + peer + "/level")),
-            [](geode::utils::web::WebResponse) {});
+        // Firebase is touched only for SDP/ICE negotiation and low-frequency level metadata.
+        if (now - lastSignalPollAt >= 1.0) {
+            lastSignalPollAt = now;
+            rtcPollSignals();
+        }
+
+        if (now - lastStateSendAt >= 0.05) {
+            lastStateSendAt = now;
+            auto p1 = this->m_player1;
+            auto p2 = this->m_player2;
+            auto pos1 = p1->getPosition();
+            auto pos2 = p2 ? p2->getPosition() : pos1;
+            auto gm = GameManager::sharedState();
+            std::ostringstream packet;
+            packet.precision(6);
+            packet << "S|" << pos1.x << "|" << pos1.y << "|" << p1->getRotation()
+                   << "|" << pos2.x << "|" << pos2.y << "|" << (p2 ? p2->getRotation() : 0.f)
+                   << "|" << (p2 ? 1 : 0) << "|" << this->getCurrentPercent()
+                   << "|" << gm->getPlayerFrame() << "|" << gm->getPlayerColor()
+                   << "|" << gm->getPlayerColor2() << "|" << (gm->m_playerGlow ? 1 : 0)
+                   << "|" << static_cast<int>(this->m_level->m_levelID);
+            auto payload = packet.str();
+            for (auto const& [remoteId, session] : g_rtcPeers) {
+                (void)remoteId;
+                auto channel = session->channel;
+                if (channel && channel->isOpen()) channel->send(rtc::string(payload));
+            }
+        }
+
+        std::deque<std::pair<std::string, std::string>> incoming;
+        {
+            std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
+            incoming.swap(g_rtcMessages);
+        }
+        for (auto const& [remoteId, payload] : incoming) {
+            float x = 0.f, y = 0.f, rotation = 0.f, x2 = 0.f, y2 = 0.f, rotation2 = 0.f, percent = 0.f;
+            int dual = 0, icon = 1, color1 = 0, color2 = 3, glow = 0, levelId = -1;
+            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d",
+                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &color1, &color2, &glow, &levelId) != 13) continue;
+            if (levelId != static_cast<int>(this->m_level->m_levelID)) continue;
+
+            auto it = g_remoteAvatars.find(remoteId);
+            CCNode* avatar = it == g_remoteAvatars.end() ? nullptr : it->second;
+            if (!avatar) {
+                avatar = SimplePlayer::create(icon);
+                if (!avatar) avatar = CCSprite::createWithSpriteFrameName("player_01_001.png");
+                if (!avatar) continue;
+                avatar->setID(("gd-rtc-remote-" + remoteId).c_str());
+                avatar->setScale(0.68f);
+                auto label = CCLabelBMFont::create("", "goldFont.fnt");
+                label->setID("gd-rtc-remote-name");
+                label->setScale(0.38f);
+                label->setPosition({0.f, 22.f});
+                avatar->addChild(label, 2);
+                auto secondary = SimplePlayer::create(icon);
+                if (secondary) {
+                    secondary->setID("gd-rtc-remote-secondary");
+                    secondary->setScale(0.72f);
+                    secondary->setVisible(false);
+                    avatar->addChild(secondary, 1);
+                }
+                this->addChild(avatar, 1000);
+                g_remoteAvatars[remoteId] = avatar;
+            }
+            avatar->setVisible(true);
+            avatar->setPosition({x, y});
+            avatar->setRotation(rotation);
+            if (auto simple = typeinfo_cast<SimplePlayer*>(avatar)) {
+                auto gm = GameManager::sharedState();
+                simple->updatePlayerFrame(icon, IconType::Cube);
+                simple->setColor(gm->colorForIdx(color1));
+                simple->setSecondColor(gm->colorForIdx(color2));
+                if (glow) simple->setGlowOutline(gm->colorForIdx(color2));
+            }
+            if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
+                auto nameIt = g_peerNames.find(remoteId);
+                std::string name = nameIt == g_peerNames.end() ? "Player" : nameIt->second;
+                if (name.size() > 16) name.resize(16);
+                name += " " + std::to_string(static_cast<int>(percent)) + "%";
+                label->setString(name.c_str());
+            }
+            if (auto secondary = typeinfo_cast<SimplePlayer*>(avatar->getChildByID("gd-rtc-remote-secondary"))) {
+                secondary->setVisible(dual != 0);
+                if (dual) {
+                    secondary->setPosition({x2 - x, y2 - y});
+                    secondary->setRotation(rotation2);
+                    secondary->updatePlayerFrame(icon, IconType::Cube);
+                    auto gm = GameManager::sharedState();
+                    secondary->setColor(gm->colorForIdx(color1));
+                    secondary->setSecondColor(gm->colorForIdx(color2));
+                }
+            }
+            g_remoteAvatarLastSeen[remoteId] = now;
+        }
+        for (auto it = g_remoteAvatars.begin(); it != g_remoteAvatars.end();) {
+            auto last = g_remoteAvatarLastSeen.find(it->first);
+            if (last == g_remoteAvatarLastSeen.end() || now - last->second > 2.0) {
+                if (it->second) it->second->removeFromParent();
+                g_remoteAvatarLastSeen.erase(it->first);
+                it = g_remoteAvatars.erase(it);
+            } else ++it;
+        }
     }
 
     void onExit() {
         PlayLayer::onExit();
         g_remoteAvatars.clear();
+        g_remoteAvatarLastSeen.clear();
     }
 };
 
