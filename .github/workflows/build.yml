@@ -38,6 +38,8 @@ jobs:
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: v5.11.2
+          # Pin bindings just before an upstream iOS-only FMOD codegen regression.
+          bindings-ref: a85436a1f164aacf646ceedaf8a40675a9e9c88b
           target: ${{ matrix.platform.target }}
           use-lto: false
 
