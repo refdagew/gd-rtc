@@ -56,9 +56,6 @@ namespace {
 }
 
 class $modify(GDRTCMenuLayer, MenuLayer) {
-    geode::TextInput* m_roomCodeInput = nullptr;
-    CCNode* m_roomPanel = nullptr;
-
     bool init() {
         if (!MenuLayer::init()) return false;
 
@@ -79,23 +76,21 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     }
 
     void onGDRTC(CCObject*) {
-        if (m_roomPanel) {
-            m_roomPanel->removeFromParent();
-            m_roomPanel = nullptr;
-            m_roomCodeInput = nullptr;
+        if (auto existing = this->getChildByID("gd-rtc-room-panel")) {
+            existing->removeFromParent();
             return;
         }
 
         auto win = CCDirector::sharedDirector()->getWinSize();
-        m_roomPanel = CCNode::create();
-        m_roomPanel->setID("gd-rtc-room-panel"_spr);
-        m_roomPanel->setZOrder(1000);
-        this->addChild(m_roomPanel);
+        auto panel = CCNode::create();
+        panel->setID("gd-rtc-room-panel");
+        panel->setZOrder(1000);
+        this->addChild(panel);
 
         auto shade = CCLayerColor::create({0, 0, 0, 170});
         shade->setContentSize(win);
         shade->setPosition({0, 0});
-        m_roomPanel->addChild(shade);
+        panel->addChild(shade);
 
         auto title = CCLabelBMFont::create("GD-RTC Rooms", "bigFont.fnt");
         title->setScale(0.8f);
@@ -138,9 +133,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     }
 
     void onCloseRooms(CCObject*) {
-        if (m_roomPanel) m_roomPanel->removeFromParent();
-        m_roomPanel = nullptr;
-        m_roomCodeInput = nullptr;
+        if (auto panel = this->getChildByID("gd-rtc-room-panel")) panel->removeFromParent();
     }
 
     void onCreateRoom(CCObject*) {
@@ -170,14 +163,20 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             return;
         }
 
-        if (m_roomCodeInput) m_roomCodeInput->setString(code);
+        if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
+            if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) input->setString(code);
+        }
         showMessage("Room created", "Your room code is:\n\n" + code +
             "\n\nShare this code with your friend.\n\nNote: this milestone provides room signaling storage only; live player sync/WebRTC is not implemented yet.");
     }
 
     void onJoinRoom(CCObject*) {
-        if (!m_roomCodeInput) return;
-        auto code = m_roomCodeInput->getString();
+        auto panel = this->getChildByID("gd-rtc-room-panel");
+        if (!panel) return;
+        auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"));
+        if (!input) return;
+        auto rawCode = input->getString();
+        std::string code(rawCode.c_str());
         for (auto& c : code) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
         if (code.size() != 6) {
             showMessage("GD-RTC", "Enter the six-character room code first.");
@@ -208,7 +207,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto memberResponse = geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(12))
             .bodyJSON(member)
-            .put(roomUrl(code, "/members/" + peer));
+            .putSync(roomUrl(code, "/members/" + peer));
         if (!memberResponse.ok()) {
             showMessage("GD-RTC — Could not join", responseError(memberResponse));
             return;
