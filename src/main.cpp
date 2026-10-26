@@ -115,21 +115,34 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto panel = CCNode::create();
         panel->setID("gd-rtc-room-panel");
         panel->setZOrder(1000);
+        panel->setPosition({win.width / 2, win.height / 2});
         this->addChild(panel);
 
-        auto shade = CCLayerColor::create({0, 0, 0, 170});
+        // Full-screen dimmer plus a distinct opaque panel makes the room UI readable
+        // regardless of the menu artwork behind it.
+        auto shade = CCLayerColor::create({0, 0, 0, 185});
         shade->setContentSize(win);
-        shade->setPosition({0, 0});
-        panel->addChild(shade);
+        shade->setPosition({-win.width / 2, -win.height / 2});
+        panel->addChild(shade, -2);
+
+        auto card = CCLayerColor::create({18, 27, 53, 248});
+        card->setContentSize({360.f, 390.f});
+        card->setPosition({-180.f, -195.f});
+        panel->addChild(card, -1);
+
+        auto accent = CCLayerColor::create({65, 190, 255, 255});
+        accent->setContentSize({340.f, 3.f});
+        accent->setPosition({-170.f, 190.f});
+        panel->addChild(accent, -1);
 
         auto title = CCLabelBMFont::create("GD-RTC Rooms", "bigFont.fnt");
         title->setScale(0.8f);
-        title->setPosition({win.width / 2, win.height / 2 + 112});
+        title->setPosition({0, 154.f});
         panel->addChild(title);
 
         auto subtitle = CCLabelBMFont::create("Play together online", "goldFont.fnt");
         subtitle->setScale(0.42f);
-        subtitle->setPosition({win.width / 2, win.height / 2 + 82});
+        subtitle->setPosition({0, 126.f});
         panel->addChild(subtitle);
 
         auto input = geode::TextInput::create(190.f, "Room code");
@@ -137,24 +150,24 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         input->setCommonFilter(geode::CommonFilter::Alphanumeric);
         input->setMaxCharCount(6);
         input->setTextAlign(geode::TextInputAlign::Center);
-        input->setPosition({win.width / 2, win.height / 2 + 43});
+        input->setPosition({0, 88.f});
         panel->addChild(input);
 
         auto members = CCLabelBMFont::create("Players in room:\n—", "goldFont.fnt");
         members->setID("gd-rtc-room-members");
         members->setScale(0.42f);
-        members->setPosition({win.width / 2, win.height / 2 - 38});
+        members->setPosition({0, 23.f});
         panel->addChild(members);
 
         auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
         status->setID("gd-rtc-room-status");
         status->setScale(0.42f);
-        status->setPosition({win.width / 2, win.height / 2 - 88});
+        status->setPosition({0, -178.f});
         panel->addChild(status);
 
         auto menu = CCMenu::create();
         menu->setID("gd-rtc-room-panel-menu");
-        menu->setPosition({win.width / 2, win.height / 2 - 3});
+        menu->setPosition({0, -70.f});
         panel->addChild(menu);
 
         auto createBtn = CCMenuItemSpriteExtra::create(
@@ -172,19 +185,19 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto refreshBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Refresh Players", 115, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .58f),
             this, menu_selector(GDRTCMenuLayer::onRefreshMembers));
-        refreshBtn->setPosition({-68, -43});
+        refreshBtn->setPosition({-68, -40});
         menu->addChild(refreshBtn);
 
         auto leaveBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Leave", 75, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onLeaveRoom));
-        leaveBtn->setPosition({70, -43});
+        leaveBtn->setPosition({70, -40});
         menu->addChild(leaveBtn);
 
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", 80, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCloseRooms));
-        closeBtn->setPosition({0, -82});
+        closeBtn->setPosition({0, -80});
         menu->addChild(closeBtn);
 
         this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 10.0f);
