@@ -333,8 +333,29 @@ namespace {
     }
 
     std::string responseError(geode::utils::web::WebResponse const& response) {
-        (void)response;
-        return "Connection failed. Please try again.";
+        auto bodyResult = response.string();
+        std::string body = bodyResult ? bodyResult.unwrap() : "";
+        log::warn("GD-RTC room service request failed: HTTP {}, error='{}', body='{}'",
+            response.code(), response.errorMessage(), body.substr(0, 240));
+        // Keep implementation details out of the player-facing UI. The full
+        // response is available in Geode's log if a report is needed.
+        return "Couldn't connect to the room service. Check your connection and try again.";
+    }
+
+    void addGeodePanelBackground(CCNode* panel) {
+        auto bg = CCSprite::createWithSpriteFrameName("GJ_square01.png");
+        if (bg && bg->getContentSize().width > 0.f && bg->getContentSize().height > 0.f) {
+            bg->setScaleX(360.f / bg->getContentSize().width);
+            bg->setScaleY(420.f / bg->getContentSize().height);
+            bg->setPosition({0.f, 0.f});
+            bg->setID("gd-rtc-panel-background");
+            panel->addChild(bg, -1);
+        } else {
+            auto fallback = CCLayerColor::create({105, 69, 43, 248});
+            fallback->setContentSize({360.f, 420.f});
+            fallback->setPosition({-180.f, -210.f});
+            panel->addChild(fallback, -1);
+        }
     }
 }
 
@@ -379,7 +400,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({72.f, 0.f});
             if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(false);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setPosition({0.f, -164.f});
-            if (auto item = menu->getChildByID("gd-rtc-close")) item->setVisible(false);
+            if (auto item = menu->getChildByID("gd-rtc-close")) item->setVisible(true);
         }
         if (auto subtitle = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-subtitle"))) {
             subtitle->setString(inRoom ? "Invite friends with this room code" : "Create a room or join with a 5-digit code");
@@ -453,16 +474,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         panel->setScale(std::max(0.55f, uiScale));
         this->addChild(panel);
 
-        // Compact opaque card over the screen-space dimmer.
-        auto card = CCLayerColor::create({18, 27, 53, 248});
-        card->setContentSize({360.f, 420.f});
-        card->setPosition({-180.f, -210.f});
-        panel->addChild(card, -1);
-
-        auto accent = CCLayerColor::create({65, 190, 255, 255});
-        accent->setContentSize({340.f, 3.f});
-        accent->setPosition({-170.f, 205.f});
-        panel->addChild(accent, -1);
+        // Use Geometry Dash's own brown panel asset rather than a custom navy card.
+        addGeodePanelBackground(panel);
 
         auto title = CCLabelBMFont::create("GD-RTC", "bigFont.fnt");
         title->setScale(0.86f);
@@ -480,7 +493,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         input->setCommonFilter(geode::CommonFilter::Uint);
         input->setMaxCharCount(5);
         input->setTextAlign(geode::TextInputAlign::Center);
-        input->setPosition({105.f, 25.f});
+        input->setPosition({48.f, -15.f});
         panel->addChild(input);
 
         auto codeLabel = CCLabelBMFont::create("", "bigFont.fnt");
@@ -490,7 +503,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         codeLabel->setVisible(false);
         panel->addChild(codeLabel);
 
-        auto membersBack = CCLayerColor::create({8, 14, 31, 220});
+        auto membersBack = CCLayerColor::create({69, 44, 29, 220});
         membersBack->setID("gd-rtc-members-back");
         membersBack->setContentSize({320.f, 218.f});
         membersBack->setPosition({-160.f, -151.f});
@@ -531,17 +544,17 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         panel->addChild(menu);
 
         auto createBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
+            ButtonSprite::create("Create Room", 140, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCreateRoom));
         createBtn->setID("gd-rtc-create");
-        createBtn->setPosition({-90, 0});
+        createBtn->setPosition({0.f, 0.f});
         menu->addChild(createBtn);
 
         auto joinBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Join", 72, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onJoinRoom));
         joinBtn->setID("gd-rtc-join");
-        joinBtn->setPosition({18, 0});
+        joinBtn->setPosition({-76.f, -40.f});
         menu->addChild(joinBtn);
 
         auto refreshBtn = CCMenuItemSpriteExtra::create(
@@ -1331,14 +1344,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         panel->setPosition({win.width / 2, win.height / 2});
         panel->setScale(std::max(0.55f, std::min(1.0f, std::min((win.width - 24.f) / 360.f, (win.height - 24.f) / 420.f))));
         this->addChild(panel, 1999);
-        auto card = CCLayerColor::create({18, 27, 53, 248});
-        card->setContentSize({360.f, 420.f});
-        card->setPosition({-180.f, -210.f});
-        panel->addChild(card);
-        auto accent = CCLayerColor::create({65, 190, 255, 255});
-        accent->setContentSize({340.f, 3.f});
-        accent->setPosition({-170.f, 205.f});
-        panel->addChild(accent);
+        addGeodePanelBackground(panel);
         auto title = CCLabelBMFont::create("GD-RTC", "bigFont.fnt");
         title->setScale(0.86f);
         title->setPosition({0, 171.f});
@@ -1353,7 +1359,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         input->setCommonFilter(geode::CommonFilter::Uint);
         input->setMaxCharCount(5);
         input->setTextAlign(geode::TextInputAlign::Center);
-        input->setPosition({105.f, 25.f});
+        input->setPosition({48.f, -15.f});
         panel->addChild(input);
         auto code = CCLabelBMFont::create("", "bigFont.fnt");
         code->setID("gd-rtc-pause-code-label");
@@ -1361,7 +1367,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         code->setPosition({0, 111.f});
         code->setVisible(false);
         panel->addChild(code);
-        auto membersBack = CCLayerColor::create({8, 14, 31, 220});
+        auto membersBack = CCLayerColor::create({69, 44, 29, 220});
         membersBack->setID("gd-rtc-pause-members-back");
         membersBack->setContentSize({320.f, 218.f});
         membersBack->setPosition({-160.f, -151.f});
@@ -1401,13 +1407,13 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
             ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCPauseLayer::onPauseCreateRoom));
         create->setID("gd-rtc-pause-create");
-        create->setPosition({-90.f, 0.f});
+        create->setPosition({0.f, 0.f});
         actions->addChild(create);
         auto join = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Join", 72, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCPauseLayer::onPauseJoinRoom));
         join->setID("gd-rtc-pause-join");
-        join->setPosition({18.f, 0.f});
+        join->setPosition({-76.f, -40.f});
         actions->addChild(join);
         auto leave = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Leave Room", 120, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .62f),
