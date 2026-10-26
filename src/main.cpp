@@ -473,28 +473,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (!this->getChildByID("gd-rtc-room-panel") || g_roomOperationPending) return;
         g_roomOperationPending = true;
         setRoomStatus("Creating room...");
-        // Best-effort garbage collection for rooms abandoned for more than a day.
-        // Use a generous TTL so a long-running level is not mistaken for a dead room.
-        async::spawn(geode::utils::web::WebRequest()
-            .timeout(std::chrono::seconds(10))
-            .get(roomsUrl()),
-            [](geode::utils::web::WebResponse response) {
-                if (!response.ok()) return;
-                auto parsed = response.json();
-                if (!parsed || parsed.unwrap().isNull()) return;
-                auto rooms = parsed.unwrap();
-                auto now = nowSeconds();
-                for (auto const& [roomCode, room] : rooms) {
-                    auto lastSeenResult = room["lastSeen"].asDouble();
-                    double lastSeen = lastSeenResult ? lastSeenResult.unwrap() : 0.0;
-                    if (lastSeen > 0.0 && now - lastSeen > 86400.0) {
-                        async::spawn(geode::utils::web::WebRequest()
-                            .timeout(std::chrono::seconds(8))
-                            .send("DELETE", roomUrl(roomCode)),
-                            [](geode::utils::web::WebResponse) {});
-                    }
-                }
-            });
+        // Avoid downloading the entire database just to garbage-collect rooms:
+        // each client only reads its own room and its small member directory.
         auto code = makeRoomCode();
         auto peer = makePeerId();
         auto now = nowSeconds();
@@ -554,7 +534,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         Ref<GDRTCMenuLayer> self = this;
         async::spawn(geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(12))
-            .get(roomUrl(code)),
+            .get(roomUrl(code, "/members")),
             [self, code, peer, now](geode::utils::web::WebResponse roomResponse) {
                 if (!roomResponse.ok()) {
                     g_roomOperationPending = false;
@@ -568,8 +548,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     return;
                 }
 
-                auto existing = parsed.unwrap();
-                auto members = existing["members"];
+                auto members = parsed.unwrap();
                 unsigned int count = 0;
                 for (auto const& [id, value] : members) { (void)id; (void)value; ++count; }
                 if (count >= 8) {
@@ -638,7 +617,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         Ref<GDRTCMenuLayer> self = this;
         async::spawn(geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(10))
-            .get(roomUrl(code)),
+            .get(roomUrl(code, "/members")),
             [self, code](geode::utils::web::WebResponse response) {
                 g_refreshPending = false;
                 if (!response.ok()) {
@@ -651,8 +630,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     self->setRoomStatus("Room not found.");
                     return;
                 }
-                auto data = parsed.unwrap();
-                auto members = data["members"];
+                auto members = parsed.unwrap();
                 std::string names = "Players in room:";
                 unsigned int count = 0;
                 g_roomMemberIds.clear();
@@ -668,16 +646,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
                     if (name.size() > 16) name.resize(16);
-                    auto state = value["state"];
-                    auto level = state["levelName"].asString();
-                    auto percent = state["percent"].asDouble();
+                    auto state = value["currentLevel"];
+                    auto level = state["name"].asString();
                     auto updated = state["updatedAt"].asDouble();
                     std::string row = name;
                     if (level && updated && nowSeconds() - updated.unwrap() < 3.0) {
                         std::string levelName = level.unwrap();
                         if (levelName.size() > 14) levelName.resize(14);
                         row += " — " + levelName;
-                        if (percent) row += " " + std::to_string(static_cast<int>(percent.unwrap())) + "%";
                     } else {
                         row += " — waiting for level";
                     }
@@ -711,7 +687,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         Ref<GDRTCMenuLayer> self = this;
         async::spawn(geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(12))
-            .get(roomUrl(code, "/members/" + peer + "/level")),
+            .get(roomUrl(code, "/levels/" + peer)),
             [self, code](geode::utils::web::WebResponse response) {
                 if (g_activeRoomCode != code) return;
                 if (!response.ok()) {
@@ -824,10 +800,21 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             levelInfo["levelData"] = levelData;
             levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
             levelInfo["updatedAt"] = now;
+            // Large level payloads live outside /members so normal room-list
+            // reads never download megabytes of custom level data.
             async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(12))
+                .timeout(std::chrono::seconds(15))
                 .bodyJSON(levelInfo)
-                .put(roomUrl(code, "/members/" + peer + "/level")),
+                .put(roomUrl(code, "/levels/" + peer)),
+                [](geode::utils::web::WebResponse) {});
+            matjson::Value levelMeta = matjson::Value::object();
+            levelMeta["name"] = levelName;
+            levelMeta["levelID"] = static_cast<int>(this->m_level->m_levelID);
+            levelMeta["updatedAt"] = now;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(8))
+                .bodyJSON(levelMeta)
+                .put(roomUrl(code, "/members/" + peer + "/currentLevel")),
                 [](geode::utils::web::WebResponse) {});
         }
 
@@ -838,7 +825,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         }
 
         // Discover new room members occasionally, never at gameplay frame rate.
-        if (now - lastPeerDiscoveryAt >= 5.0) {
+        if (now - lastPeerDiscoveryAt >= 10.0) {
             lastPeerDiscoveryAt = now;
             async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(6))
