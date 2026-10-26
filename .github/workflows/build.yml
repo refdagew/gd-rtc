@@ -19,12 +19,6 @@ jobs:
           - name: Windows
             runner: windows-latest
             target: Win64
-          - name: macOS
-            runner: macos-latest
-            target: MacOS
-          - name: iOS
-            runner: macos-latest
-            target: iOS
           - name: Android64
             runner: ubuntu-latest
             target: Android64
@@ -40,7 +34,6 @@ jobs:
           sdk: v5.11.2
           target: ${{ matrix.platform.target }}
           use-lto: false
-          configure-args: ${{ matrix.platform.target == 'iOS' && format('-DCMAKE_CXX_FLAGS=-include{0}/geode-sdk-clone/loader/include/Geode/fmod/fmod.hpp', github.workspace) || '' }}
 
       - name: Upload .geode package
         if: success()
