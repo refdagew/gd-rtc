@@ -15,6 +15,7 @@ namespace {
     constexpr char kAlphabet[] = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     std::string g_activeRoomCode;
     std::string g_activePeerId;
+    bool g_refreshPending = false;
 
     double nowSeconds() {
         return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -184,6 +185,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         closeBtn->setPosition({0, -82});
         menu->addChild(closeBtn);
 
+        this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 5.0f);
         if (!g_activeRoomCode.empty()) {
             input->setString(g_activeRoomCode);
             setRoomStatus("Room " + g_activeRoomCode);
@@ -192,6 +194,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     }
 
     void onCloseRooms(CCObject*) {
+        this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) panel->removeFromParent();
         setBackgroundMenusEnabled(true);
     }
@@ -299,11 +302,21 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             });
     }
 
+    void pollRoom(float) {
+        if (!this->getChildByID("gd-rtc-room-panel")) {
+            this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
+            return;
+        }
+        if (!g_activeRoomCode.empty()) onRefreshMembers(nullptr);
+    }
+
     void onRefreshMembers(CCObject*) {
+        if (g_refreshPending) return;
         if (g_activeRoomCode.empty()) {
             setRoomMembers("Players in room:\nCreate or join a room first.");
             return;
         }
+        g_refreshPending = true;
         setRoomStatus("Refreshing players...");
         auto code = g_activeRoomCode;
         Ref<GDRTCMenuLayer> self = this;
@@ -311,6 +324,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .timeout(std::chrono::seconds(10))
             .get(roomUrl(code)),
             [self, code](geode::utils::web::WebResponse response) {
+                g_refreshPending = false;
                 if (!response.ok()) {
                     self->setRoomStatus(responseError(response));
                     return;
