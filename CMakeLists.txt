@@ -42,7 +42,7 @@ set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     mbedtls
     GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
-    GIT_TAG v4.2.0
+    GIT_TAG v3.6.4
     GIT_SHALLOW TRUE
     GIT_SUBMODULES_RECURSE TRUE
 )
