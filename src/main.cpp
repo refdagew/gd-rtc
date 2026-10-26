@@ -58,6 +58,22 @@ namespace {
         return session->channel;
     }
 
+    void rtcCloseAllPeers() {
+        for (auto const& [remoteId, session] : g_rtcPeers) {
+            (void)remoteId;
+            try {
+                auto channel = rtcGetChannel(session);
+                if (channel) channel->close();
+                if (session->pc) session->pc->close();
+            } catch (std::exception const& e) {
+                log::debug("GD-RTC peer close: {}", e.what());
+            }
+        }
+        g_rtcPeers.clear();
+        std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
+        g_rtcMessages.clear();
+    }
+
     void rtcEnsurePeer(std::string const& remoteId) {
         if (g_activeRoomCode.empty() || g_activePeerId.empty() || remoteId.empty() ||
             remoteId == g_activePeerId || g_rtcPeers.count(remoteId)) return;
@@ -137,6 +153,7 @@ namespace {
         if (g_activeRoomCode.empty() || g_activePeerId.empty()) return;
         auto room = g_activeRoomCode;
         auto self = g_activePeerId;
+        std::vector<std::string> timedOutPeers;
         for (auto const& [remoteId, session] : g_rtcPeers) {
             // Stop touching RTDB entirely once the peer-to-peer channel is live.
             auto channel = rtcGetChannel(session);
@@ -148,7 +165,10 @@ namespace {
             // after 90 seconds; no relay server is configured by design.
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - session->createdAt).count();
-            if (elapsed >= 90) continue;
+            if (elapsed >= 90) {
+                timedOutPeers.push_back(remoteId);
+                continue;
+            }
             auto interval = elapsed < 15 ? 1 : (elapsed < 45 ? 3 : 8);
             if (session->lastSignalPollAt.time_since_epoch().count() != 0 &&
                 std::chrono::duration_cast<std::chrono::seconds>(now - session->lastSignalPollAt).count() < interval) continue;
@@ -200,6 +220,17 @@ namespace {
                         log::warn("GD-RTC WebRTC signaling error: {}", e.what());
                     }
                 });
+        }
+        for (auto const& remoteId : timedOutPeers) {
+            auto it = g_rtcPeers.find(remoteId);
+            if (it == g_rtcPeers.end()) continue;
+            try {
+                auto channel = rtcGetChannel(it->second);
+                if (channel) channel->close();
+                if (it->second->pc) it->second->pc->close();
+            } catch (...) {}
+            g_rtcPeers.erase(it);
+            log::warn("GD-RTC: direct connection to {} timed out; will retry discovery", remoteId);
         }
     }
 
@@ -764,11 +795,26 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     return;
                 }
                 if (g_activeRoomCode == code && g_activePeerId == peer) {
+                    std::vector<std::string> remoteIds;
+                    for (auto const& [remoteId, session] : g_rtcPeers) {
+                        (void)session;
+                        remoteIds.push_back(remoteId);
+                    }
+                    rtcCloseAllPeers();
                     g_activeRoomCode.clear();
                     g_activePeerId.clear();
-                    g_rtcPeers.clear();
                     g_peerNames.clear();
+                    g_roomMemberIds.clear();
                     g_remoteAvatarLastSeen.clear();
+                    // Remove this peer's incoming signal mailbox from every other
+                    // participant. Deleting our member record removes our outgoing
+                    // mailbox as part of the same room subtree.
+                    for (auto const& remoteId : remoteIds) {
+                        async::spawn(geode::utils::web::WebRequest()
+                            .timeout(std::chrono::seconds(5))
+                            .send("DELETE", roomUrl(code, "/members/" + remoteId + "/signals/" + peer)),
+                            [](geode::utils::web::WebResponse) {});
+                    }
                 }
                 self->updateRoomControls(false);
                 self->setRoomMembers("Players in room:\n—");
