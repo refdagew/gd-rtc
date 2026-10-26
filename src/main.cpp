@@ -762,7 +762,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (now - g_lastManualRefreshAt < 1.0) return;
             g_lastManualRefreshAt = now;
             if (auto panel = this->getChildByID("gd-rtc-room-panel")) {
-                if (auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(panel->getChildByID("gd-rtc-room-panel-menu")->getChildByID("gd-rtc-refresh"))) item->setEnabled(false);
+                auto menu = panel->getChildByID("gd-rtc-room-panel-menu");
+                if (menu) if (auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(menu->getChildByID("gd-rtc-refresh"))) item->setEnabled(false);
             }
             this->scheduleOnce(schedule_selector(GDRTCMenuLayer::restoreRefreshButton), 1.f);
         }
