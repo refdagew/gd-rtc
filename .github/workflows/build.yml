@@ -1,0 +1,51 @@
+name: Build GD-RTC
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: Windows
+            runner: windows-latest
+            target: Win64
+          - name: macOS
+            runner: macos-latest
+            target: MacOS
+          - name: iOS
+            runner: macos-latest
+            target: iOS
+          - name: Android64
+            runner: ubuntu-latest
+            target: Android64
+    runs-on: ${{ matrix.platform.runner }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Build Geode mod
+        id: build
+        uses: geode-sdk/build-geode-mod@main
+        with:
+          sdk: given
+          target: ${{ matrix.platform.target }}
+          use-lto: false
+
+      - name: Upload .geode package
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gd-rtc-${{ matrix.platform.name }}
+          path: ${{ steps.build.outputs.build-output }}/*.geode
+          if-no-files-found: error
+          retention-days: 14
