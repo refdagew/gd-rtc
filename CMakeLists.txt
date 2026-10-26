@@ -61,4 +61,4 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(libdatachannel)
 
 setup_geode_mod(${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME} PRIVATE LibDataChannel::LibDataChannel)
+target_link_libraries(${PROJECT_NAME} LibDataChannel::LibDataChannel)
