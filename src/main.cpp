@@ -681,6 +681,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 if (g_activeRoomCode == code && g_activePeerId == peer) {
                     g_activeRoomCode.clear();
                     g_activePeerId.clear();
+                    g_stateSendPending = false;
+                    g_statePollPending = false;
                 }
                 self->updateRoomControls(false);
                 self->setRoomMembers("Players in room:\n—");
@@ -753,17 +755,35 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         static PlayLayer* lastLayer = nullptr;
         static double lastSendAt = 0.0;
         static double lastPollAt = 0.0;
+        static double lastHeartbeatAt = 0.0;
         if (lastLayer != this) {
             g_remoteAvatars.clear();
             lastLayer = this;
             lastSendAt = 0.0;
             lastPollAt = 0.0;
+            lastHeartbeatAt = 0.0;
         }
 
         auto now = nowSeconds();
         auto code = g_activeRoomCode;
         auto peer = g_activePeerId;
         auto player = this->m_player1;
+
+        // Keep presence alive while actually playing, not only while the room
+        // overlay happens to be open in the main menu.
+        if (now - lastHeartbeatAt >= 10.0) {
+            lastHeartbeatAt = now;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .bodyJSON(now)
+                .put(roomUrl(code, "/lastSeen")),
+                [](geode::utils::web::WebResponse) {});
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .bodyJSON(now)
+                .put(roomUrl(code, "/members/" + peer + "/lastSeen")),
+                [](geode::utils::web::WebResponse) {});
+        }
         auto levelName = std::string(this->m_level->m_levelName.c_str());
         auto levelID = static_cast<int>(this->m_level->m_levelID);
         auto position = player->getPosition();
@@ -796,8 +816,8 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 .timeout(std::chrono::seconds(5))
                 .bodyJSON(state)
                 .put(roomUrl(code, "/states/" + peer)),
-                [code](geode::utils::web::WebResponse) {
-                    if (g_activeRoomCode == code) g_stateSendPending = false;
+                [](geode::utils::web::WebResponse) {
+                    g_stateSendPending = false;
                 });
         }
 
@@ -809,7 +829,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 .timeout(std::chrono::seconds(6))
                 .get(roomUrl(code, "/states")),
                 [self, code, peer, levelID, levelName](geode::utils::web::WebResponse response) {
-                    if (g_activeRoomCode == code) g_statePollPending = false;
+                    g_statePollPending = false;
                     if (g_activeRoomCode != code || g_activePeerId != peer || PlayLayer::get() != self) return;
                     if (!response.ok()) return;
                     auto parsed = response.json();
