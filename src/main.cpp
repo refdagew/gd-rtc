@@ -121,6 +121,9 @@ namespace {
         auto room = g_activeRoomCode;
         auto self = g_activePeerId;
         for (auto const& [remoteId, session] : g_rtcPeers) {
+            // Stop touching RTDB entirely once the peer-to-peer channel is live.
+            if (session->channel && session->channel->isOpen() &&
+                session->pc->state() == rtc::PeerConnection::State::Connected) continue;
             if (session->signalPollPending.exchange(true)) continue;
             async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(6))
