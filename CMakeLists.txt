@@ -55,6 +55,12 @@ set(CMAKE_C_SIMULATE_ID "${_gd_rtc_simulate_id}")
 if(TARGET mbedtls AND NOT TARGET MbedTLS::MbedTLS)
     add_library(MbedTLS::MbedTLS ALIAS mbedtls)
 endif()
+# libdatachannel requires DTLS-SRTP declarations from Mbed TLS even when
+# this mod uses data channels only. Enable the feature consistently in both
+# the Mbed TLS library and downstream libdatachannel compilation.
+if(TARGET mbedtls)
+    target_compile_definitions(mbedtls PUBLIC MBEDTLS_SSL_DTLS_SRTP)
+endif()
 
 FetchContent_Declare(
     libdatachannel
