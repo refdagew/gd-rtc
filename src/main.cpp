@@ -40,6 +40,19 @@ namespace {
     std::map<std::string, std::pair<CCPoint, float>> g_remoteAvatarTargets;
     std::map<std::string, std::pair<CCPoint, float>> g_remoteSecondaryTargets;
     std::map<std::string, double> g_remoteAvatarLastSeen;
+    void clearRemoteAvatars() {
+        for (auto const& [id, node] : g_remoteAvatars) { (void)id; if (node) node->removeFromParent(); }
+        for (auto const& [id, node] : g_remoteSecondaryAvatars) { (void)id; if (node) node->removeFromParent(); }
+        for (auto const& [id, node] : g_remoteNameLabels) { (void)id; if (node) node->removeFromParent(); }
+        for (auto const& [id, node] : g_remoteProgressIcons) { (void)id; if (node) node->removeFromParent(); }
+        g_remoteAvatars.clear();
+        g_remoteSecondaryAvatars.clear();
+        g_remoteNameLabels.clear();
+        g_remoteProgressIcons.clear();
+        g_remoteAvatarTargets.clear();
+        g_remoteSecondaryTargets.clear();
+        g_remoteAvatarLastSeen.clear();
+    }
     struct GDRTCPeerSession {
         std::shared_ptr<rtc::PeerConnection> pc;
         std::shared_ptr<rtc::DataChannel> channel;
@@ -358,7 +371,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         }
         if (auto codeLabel = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-code-label"))) {
             codeLabel->setVisible(inRoom);
-            if (inRoom) codeLabel->setString(("ROOM CODE  " + g_activeRoomCode).c_str());
+            if (inRoom) codeLabel->setString(("Room " + g_activeRoomCode).c_str());
         }
         if (menu) {
             if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({-72.f, 0.f});
@@ -452,12 +465,12 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         subtitle->setPosition({0, 143.f});
         panel->addChild(subtitle);
 
-        auto input = geode::TextInput::create(150.f, "00000");
+        auto input = geode::TextInput::create(100.f, "00000");
         input->setID("gd-rtc-room-code-input");
         input->setCommonFilter(geode::CommonFilter::Uint);
         input->setMaxCharCount(5);
         input->setTextAlign(geode::TextInputAlign::Center);
-        input->setPosition({0, 100.f});
+        input->setPosition({105.f, 25.f});
         panel->addChild(input);
 
         auto codeLabel = CCLabelBMFont::create("", "bigFont.fnt");
@@ -511,14 +524,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCreateRoom));
         createBtn->setID("gd-rtc-create");
-        createBtn->setPosition({-75, 0});
+        createBtn->setPosition({-90, 0});
         menu->addChild(createBtn);
 
         auto joinBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Join Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onJoinRoom));
         joinBtn->setID("gd-rtc-join");
-        joinBtn->setPosition({75, 0});
+        joinBtn->setPosition({18, 0});
         menu->addChild(joinBtn);
 
         auto refreshBtn = CCMenuItemSpriteExtra::create(
@@ -885,7 +898,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     g_activePeerId.clear();
                     g_peerNames.clear();
                     g_roomMemberIds.clear();
-                    g_remoteAvatarLastSeen.clear();
+                    clearRemoteAvatars();
                     // Remove this peer's incoming signal mailbox from every other
                     // participant. Deleting our member record removes our outgoing
                     // mailbox as part of the same room subtree.
@@ -1224,13 +1237,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
 
     void onExit() {
         PlayLayer::onExit();
-        g_remoteAvatars.clear();
-        g_remoteSecondaryAvatars.clear();
-        g_remoteNameLabels.clear();
-        g_remoteProgressIcons.clear();
-        g_remoteAvatarTargets.clear();
-        g_remoteSecondaryTargets.clear();
-        g_remoteAvatarLastSeen.clear();
+        clearRemoteAvatars();
     }
 };
 
@@ -1322,12 +1329,12 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         subtitle->setScale(0.42f);
         subtitle->setPosition({0, 143.f});
         panel->addChild(subtitle);
-        auto input = geode::TextInput::create(150.f, "00000");
+        auto input = geode::TextInput::create(100.f, "00000");
         input->setID("gd-rtc-pause-code-input");
         input->setCommonFilter(geode::CommonFilter::Uint);
         input->setMaxCharCount(5);
         input->setTextAlign(geode::TextInputAlign::Center);
-        input->setPosition({0, 100.f});
+        input->setPosition({105.f, 25.f});
         panel->addChild(input);
         auto code = CCLabelBMFont::create("", "bigFont.fnt");
         code->setID("gd-rtc-pause-code-label");
@@ -1375,13 +1382,13 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
             ButtonSprite::create("Create Room", 120, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCPauseLayer::onPauseCreateRoom));
         create->setID("gd-rtc-pause-create");
-        create->setPosition({-72.f, 0.f});
+        create->setPosition({-90.f, 0.f});
         actions->addChild(create);
         auto join = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Join", 72, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .65f),
             this, menu_selector(GDRTCPauseLayer::onPauseJoinRoom));
         join->setID("gd-rtc-pause-join");
-        join->setPosition({72.f, 0.f});
+        join->setPosition({18.f, 0.f});
         actions->addChild(join);
         auto leave = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Leave Room", 120, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .62f),
@@ -1509,6 +1516,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
             [self, code, peer](geode::utils::web::WebResponse response) {
                 if (!response.ok()) { self->setPauseRoomStatus("Couldn't leave room."); return; }
                 rtcCloseAllPeers();
+                clearRemoteAvatars();
                 g_activeRoomCode.clear();
                 g_activePeerId.clear();
                 g_peerNames.clear();
@@ -1544,7 +1552,9 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
                 auto members = parsed.unwrap();
                 auto panel = self->getChildByID("gd-rtc-pause-room-panel");
                 if (!panel) return;
-                if (auto title = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-players-title"))) title->setString(("Players (" + std::to_string(members.size()) + "/8)").c_str());
+                unsigned int totalMembers = 0;
+                for (auto const& [memberId, memberValue] : members) { (void)memberId; (void)memberValue; ++totalMembers; }
+                if (auto title = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-players-title"))) title->setString(("Players (" + std::to_string(totalMembers) + "/8)").c_str());
                 if (auto own = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-self-name"))) own->setString((playerName() + " (you)").c_str());
                 if (auto ownState = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-pause-self-state"))) {
                     auto play = PlayLayer::get();
