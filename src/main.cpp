@@ -98,7 +98,10 @@ namespace {
             });
             g_rtcPeers[remoteId] = session;
             if (session->offerer) {
-                session->channel = session->pc->createDataChannel("gd-rtc-gameplay");
+                rtc::DataChannelInit channelConfig;
+                channelConfig.reliability.unordered = true;
+                channelConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(100);
+                session->channel = session->pc->createDataChannel("gd-rtc-gameplay", channelConfig);
                 session->channel->onMessage([remoteId](rtc::message_variant message) {
                     if (!std::holds_alternative<rtc::string>(message)) return;
                     std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
@@ -816,7 +819,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             rtcPollSignals();
         }
 
-        if (now - lastStateSendAt >= 0.05) {
+        if (now - lastStateSendAt >= (1.0 / 60.0)) {
             lastStateSendAt = now;
             auto p1 = this->m_player1;
             auto p2 = this->m_player2;
