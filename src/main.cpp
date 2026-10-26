@@ -369,8 +369,13 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (!bottomMenu) return true;
         auto icon = CCSprite::createWithSpriteFrameName("GJ_optionsBtn_001.png");
         if (!icon) icon = CCSprite::createWithSpriteFrameName("GJ_achievementsBtn_001.png");
+        if (!icon) icon = CCSprite::createWithSpriteFrameName("GJ_statsBtn_001.png");
         if (!icon) return true;
-        icon->setScale(0.82f);
+        auto rtcText = CCLabelBMFont::create("RTC", "bigFont.fnt");
+        rtcText->setScale(0.34f);
+        rtcText->setPosition({icon->getContentSize().width / 2.f, icon->getContentSize().height / 2.f});
+        rtcText->setColor({255, 255, 255});
+        icon->addChild(rtcText, 5);
         auto button = CCMenuItemSpriteExtra::create(icon, this, menu_selector(GDRTCMenuLayer::onGDRTC));
         if (!button) return true;
         button->setID("gd-rtc-main-menu-button"_spr);
@@ -1110,6 +1115,8 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                    << "|" << (p2 ? 1 : 0) << "|" << this->getCurrentPercent()
                    << "|" << activeIcon << "|" << iconType << "|" << gm->getPlayerColor()
                    << "|" << gm->getPlayerColor2() << "|" << (gm->m_playerGlow ? 1 : 0)
+                   << "|" << (p1->m_isUpsideDown ? 1 : 0)
+                   << "|" << (p2 && p2->m_isUpsideDown ? 1 : 0)
                    << "|" << static_cast<int>(this->m_level->m_levelID) << "|";
             std::string safeLevelName = this->m_level->m_levelName.c_str();
             for (auto& ch : safeLevelName) if (ch == '|' || ch == '\n' || ch == '\r') ch = ' ';
@@ -1130,10 +1137,10 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         }
         for (auto const& [remoteId, payload] : incoming) {
             float x = 0.f, y = 0.f, rotation = 0.f, x2 = 0.f, y2 = 0.f, rotation2 = 0.f, percent = 0.f;
-            int dual = 0, icon = 1, iconType = static_cast<int>(IconType::Cube), color1 = 0, color2 = 3, glow = 0, levelId = -1;
+            int dual = 0, icon = 1, iconType = static_cast<int>(IconType::Cube), color1 = 0, color2 = 3, glow = 0, gravity1 = 0, gravity2 = 0, levelId = -1;
             char remoteLevelName[64] = {};
-            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%63[^|]",
-                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &iconType, &color1, &color2, &glow, &levelId, remoteLevelName) != 15) continue;
+            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%d|%d|%63[^|]",
+                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &iconType, &color1, &color2, &glow, &gravity1, &gravity2, &levelId, remoteLevelName) != 17) continue;
             std::string localLevelName = this->m_level->m_levelName.c_str();
             for (auto& ch : localLevelName) if (ch == '|' || ch == '\n' || ch == '\r') ch = ' ';
             if (localLevelName.size() > 63) localLevelName.resize(63);
@@ -1185,6 +1192,8 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 }
             }
             avatar->setVisible(true);
+            // Gravity direction is independent from the player's spin rotation.
+            avatar->setScaleY(gravity1 ? -1.f : 1.f);
             g_remoteAvatarTargets[remoteId] = {{x, y}, rotation};
             if (auto simple = typeinfo_cast<SimplePlayer*>(avatar)) {
                 auto gm = GameManager::sharedState();
@@ -1196,6 +1205,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             auto secondaryIt = g_remoteSecondaryAvatars.find(remoteId);
             if (secondaryIt != g_remoteSecondaryAvatars.end() && secondaryIt->second) {
                 secondaryIt->second->setVisible(dual != 0);
+                secondaryIt->second->setScaleY(gravity2 ? -1.f : 1.f);
                 if (dual) {
                     auto secondary = typeinfo_cast<SimplePlayer*>(secondaryIt->second);
                     if (secondary) {
@@ -1223,6 +1233,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                     progressIt->second->setPosition({width * (std::clamp(percent, 0.f, 100.f) / 100.f - 0.5f), -11.f});
                     if (auto simple = typeinfo_cast<SimplePlayer*>(progressIt->second)) {
                         simple->updatePlayerFrame(icon, static_cast<IconType>(iconType));
+                        simple->setScaleY(0.28f);
                         auto gm = GameManager::sharedState();
                         simple->setColor(gm->colorForIdx(color1));
                         simple->setSecondColor(gm->colorForIdx(color2));
