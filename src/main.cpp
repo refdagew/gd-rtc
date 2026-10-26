@@ -38,6 +38,7 @@ namespace {
     struct GDRTCPeerSession {
         std::shared_ptr<rtc::PeerConnection> pc;
         std::shared_ptr<rtc::DataChannel> channel;
+        std::mutex channelMutex;
         bool offerer = false;
         std::atomic_bool remoteDescriptionSet{false};
         std::atomic_bool signalPollPending{false};
@@ -47,6 +48,11 @@ namespace {
     std::map<std::string, std::shared_ptr<GDRTCPeerSession>> g_rtcPeers;
     std::mutex g_rtcMessagesMutex;
     std::deque<std::pair<std::string, std::string>> g_rtcMessages;
+
+    std::shared_ptr<rtc::DataChannel> rtcGetChannel(std::shared_ptr<GDRTCPeerSession> const& session) {
+        std::lock_guard<std::mutex> lock(session->channelMutex);
+        return session->channel;
+    }
 
     void rtcEnsurePeer(std::string const& remoteId) {
         if (g_activeRoomCode.empty() || g_activePeerId.empty() || remoteId.empty() ||
@@ -82,7 +88,10 @@ namespace {
                     [](geode::utils::web::WebResponse) {});
             });
             session->pc->onDataChannel([remoteId, session](std::shared_ptr<rtc::DataChannel> channel) {
-                session->channel = channel;
+                {
+                    std::lock_guard<std::mutex> lock(session->channelMutex);
+                    session->channel = channel;
+                }
                 channel->onMessage([remoteId](rtc::message_variant message) {
                     if (!std::holds_alternative<rtc::string>(message)) return;
                     std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
@@ -101,8 +110,12 @@ namespace {
                 rtc::DataChannelInit channelConfig;
                 channelConfig.reliability.unordered = true;
                 channelConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(100);
-                session->channel = session->pc->createDataChannel("gd-rtc-gameplay", channelConfig);
-                session->channel->onMessage([remoteId](rtc::message_variant message) {
+                auto channel = session->pc->createDataChannel("gd-rtc-gameplay", channelConfig);
+                {
+                    std::lock_guard<std::mutex> lock(session->channelMutex);
+                    session->channel = channel;
+                }
+                channel->onMessage([remoteId](rtc::message_variant message) {
                     if (!std::holds_alternative<rtc::string>(message)) return;
                     std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
                     if (g_rtcMessages.size() > 128) g_rtcMessages.pop_front();
@@ -122,7 +135,8 @@ namespace {
         auto self = g_activePeerId;
         for (auto const& [remoteId, session] : g_rtcPeers) {
             // Stop touching RTDB entirely once the peer-to-peer channel is live.
-            if (session->channel && session->channel->isOpen() &&
+            auto channel = rtcGetChannel(session);
+            if (channel && channel->isOpen() &&
                 session->pc->state() == rtc::PeerConnection::State::Connected) continue;
             if (session->signalPollPending.exchange(true)) continue;
             async::spawn(geode::utils::web::WebRequest()
@@ -840,7 +854,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             auto payload = packet.str();
             for (auto const& [remoteId, session] : g_rtcPeers) {
                 (void)remoteId;
-                auto channel = session->channel;
+                auto channel = rtcGetChannel(session);
                 if (channel && channel->isOpen()) channel->send(rtc::string(payload));
             }
         }
