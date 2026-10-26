@@ -559,7 +559,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             auto pos1 = p1->getPosition();
             auto pos2 = p2 ? p2->getPosition() : pos1;
             matjson::Value state = matjson::Value::object();
-            state["levelID"] = this->m_level->m_levelID;
+            state["levelID"] = static_cast<int>(this->m_level->m_levelID);
             state["levelName"] = std::string(this->m_level->m_levelName.c_str());
             state["x"] = pos1.x;
             state["y"] = pos1.y;
@@ -705,7 +705,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         matjson::Value shared = matjson::Value::object();
         shared["name"] = name;
         shared["levelData"] = data;
-        shared["levelID"] = play->m_level->m_levelID;
+        shared["levelID"] = static_cast<int>(play->m_level->m_levelID);
         shared["updatedAt"] = nowSeconds();
         shared["sharedBy"] = playerName();
         async::spawn(geode::utils::web::WebRequest()
