@@ -9,6 +9,7 @@
 #include <cctype>
 #include <random>
 #include <string>
+#include <vector>
 
 using namespace geode::prelude;
 
@@ -19,6 +20,7 @@ namespace {
     std::string g_activePeerId;
     bool g_refreshPending = false;
     bool g_roomOperationPending = false;
+    std::vector<std::pair<std::string, std::string>> g_savedLevelsCache;
 
     double nowSeconds() {
         return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -54,6 +56,26 @@ namespace {
 
     std::string roomUrl(std::string const& code, std::string const& suffix = "") {
         return std::string(kDatabaseUrl) + "/rooms/" + code + suffix + ".json";
+    }
+
+    void cacheSharedLevel(std::string const& name, std::string const& data, double updatedAt) {
+        if (data.empty() || data.size() > 950000) return;
+        auto raw = Mod::get()->getSavedValue<std::string>("saved-levels-json", "[]");
+        auto parsed = matjson::Value::parse(raw);
+        auto levels = matjson::Value::array();
+        if (parsed && parsed.unwrap().isArray()) {
+            auto const& old = parsed.unwrap();
+            auto first = old.size() > 4 ? old.size() - 4 : 0;
+            for (size_t i = first; i < old.size(); ++i) levels.push(old[i]);
+        }
+        matjson::Value entry = matjson::Value::object();
+        entry["name"] = name;
+        entry["levelData"] = data;
+        entry["updatedAt"] = updatedAt;
+        levels.push(entry);
+        Mod::get()->setSavedValue<std::string>("saved-levels-json", levels.dump());
+        Mod::get()->setSavedValue<std::string>("saved-level-name", name);
+        Mod::get()->setSavedValue<std::string>("saved-level-data", data);
     }
 
     void openLevelEditor(std::string const& name, std::string const& data) {
@@ -126,8 +148,9 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-open-level")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-saved-level")) {
-                auto cached = Mod::get()->getSavedValue<std::string>("saved-level-data", "");
-                item->setVisible(!inRoom && !cached.empty());
+                auto cached = Mod::get()->getSavedValue<std::string>("saved-levels-json", "[]");
+                auto saved = matjson::Value::parse(cached);
+                item->setVisible(!inRoom && saved && saved.unwrap().isArray() && saved.unwrap().size() > 0);
             }
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
@@ -279,7 +302,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         menu->addChild(openLevelBtn);
 
         auto savedLevelBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Saved Level", 115, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
+            ButtonSprite::create("Saved Levels", 115, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
             this, menu_selector(GDRTCMenuLayer::onOpenSavedLevel));
         savedLevelBtn->setID("gd-rtc-saved-level");
         savedLevelBtn->setPosition({0, -30});
@@ -557,22 +580,79 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 auto data = std::string(dataResult.unwrap());
                 // Cache the latest downloaded level locally so it can be reopened later,
                 // even when the player is no longer in this room.
-                Mod::get()->setSavedValue<std::string>("saved-level-name", name);
-                Mod::get()->setSavedValue<std::string>("saved-level-data", data);
+                cacheSharedLevel(name, data, latestTime);
                 self->setRoomStatus("Opening " + name + "...");
                 openLevelEditor(name, data);
             });
     }
 
     void onOpenSavedLevel(CCObject*) {
-        auto name = Mod::get()->getSavedValue<std::string>("saved-level-name", "");
-        auto data = Mod::get()->getSavedValue<std::string>("saved-level-data", "");
-        if (data.empty()) {
-            setRoomStatus("No saved shared level yet.");
+        auto raw = Mod::get()->getSavedValue<std::string>("saved-levels-json", "[]");
+        auto parsed = matjson::Value::parse(raw);
+        g_savedLevelsCache.clear();
+        if (parsed && parsed.unwrap().isArray()) {
+            auto const& levels = parsed.unwrap();
+            for (size_t i = 0; i < levels.size(); ++i) {
+                auto name = levels[i]["name"].asString();
+                auto data = levels[i]["levelData"].asString();
+                if (name && data && !data.unwrap().empty()) {
+                    g_savedLevelsCache.emplace_back(name.unwrap(), data.unwrap());
+                }
+            }
+        }
+        if (g_savedLevelsCache.empty()) {
+            setRoomStatus("No saved levels yet.");
             return;
         }
-        setRoomStatus("Opening saved level...");
-        openLevelEditor(name.empty() ? "Shared level" : name, data);
+
+        auto win = CCDirector::sharedDirector()->getWinSize();
+        auto scene = CCScene::create();
+        auto bg = CCLayerColor::create({12, 20, 40, 255});
+        bg->setContentSize(win);
+        scene->addChild(bg);
+        auto title = CCLabelBMFont::create("Saved Shared Levels", "bigFont.fnt");
+        title->setPosition({win.width / 2, win.height - 45.f});
+        title->setScale(0.7f);
+        scene->addChild(title);
+        auto menu = CCMenu::create();
+        menu->setPosition({win.width / 2, win.height / 2});
+        scene->addChild(menu);
+        auto maxRows = std::min<size_t>(g_savedLevelsCache.size(), 5);
+        for (size_t i = 0; i < maxRows; ++i) {
+            auto label = g_savedLevelsCache[g_savedLevelsCache.size() - 1 - i].first;
+            if (label.size() > 24) label.resize(24);
+            auto item = CCMenuItemSpriteExtra::create(
+                ButtonSprite::create(label.c_str(), 250, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .55f),
+                this, menu_selector(GDRTCMenuLayer::onOpenSavedLevelByIndex));
+            item->setTag(static_cast<int>(g_savedLevelsCache.size() - 1 - i));
+            item->setPosition({0, 70.f - static_cast<float>(i) * 42.f});
+            menu->addChild(item);
+        }
+        auto closeMenu = CCMenu::create();
+        closeMenu->setPosition({win.width / 2, 32.f});
+        scene->addChild(closeMenu);
+        auto close = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Back", 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .6f),
+            this, menu_selector(GDRTCMenuLayer::onCloseSavedLevels));
+        closeMenu->addChild(close);
+        auto scale = std::min(1.0f, std::min((win.width - 24.f) / 320.f, (win.height - 24.f) / 360.f));
+        title->setScale(0.7f * std::max(0.65f, scale));
+        menu->setScale(std::max(0.65f, scale));
+        closeMenu->setScale(std::max(0.65f, scale));
+        CCDirector::sharedDirector()->pushScene(scene);
+    }
+
+    void onOpenSavedLevelByIndex(CCObject* sender) {
+        auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(sender);
+        if (!item) return;
+        auto index = item->getTag();
+        if (index < 0 || static_cast<size_t>(index) >= g_savedLevelsCache.size()) return;
+        auto const level = g_savedLevelsCache[static_cast<size_t>(index)];
+        openLevelEditor(level.first, level.second);
+    }
+
+    void onCloseSavedLevels(CCObject*) {
+        CCDirector::sharedDirector()->popScene();
     }
 
     void onLeaveRoom(CCObject*) {
