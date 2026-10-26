@@ -26,9 +26,11 @@ namespace {
     bool g_statePollPending = false;
     std::map<std::string, CCNode*> g_remoteAvatars;
 
+    // Keep sub-second precision: the old integer-second clock accidentally made
+    // the 10 Hz send / 4 Hz poll thresholds true for every frame during a whole second.
     double nowSeconds() {
-        return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        return std::chrono::duration<double>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
     }
 
     std::string makeRoomCode() {
@@ -521,8 +523,18 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     if (count >= 8) break;
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
-                    if (name.size() > 24) name.resize(24);
+                    if (name.size() > 20) name.resize(20);
                     names += "\n• " + name;
+                    auto state = data["states"][id];
+                    auto level = state["levelName"].asString();
+                    auto percent = state["percent"].asDouble();
+                    auto updated = state["updatedAt"].asDouble();
+                    if (level && updated && nowSeconds() - updated.unwrap() < 5.0) {
+                        std::string levelLabel = level.unwrap();
+                        if (levelLabel.size() > 18) levelLabel.resize(18);
+                        names += " — " + levelLabel;
+                        if (percent) names += " " + std::to_string(static_cast<int>(percent.unwrap())) + "%";
+                    }
                     ++count;
                 }
                 if (!count) names += "\n—";
@@ -756,6 +768,9 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         auto levelID = static_cast<int>(this->m_level->m_levelID);
         auto position = player->getPosition();
         auto rotation = player->getRotation();
+        auto secondary = this->m_player2;
+        auto secondaryPosition = secondary ? secondary->getPosition() : position;
+        auto secondaryRotation = secondary ? secondary->getRotation() : rotation;
         auto percent = this->getCurrentPercent();
 
         // RTDB is the relay in this no-STUN/no-TURN build. State is sampled at
@@ -769,6 +784,10 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             state["x"] = position.x;
             state["y"] = position.y;
             state["rotation"] = rotation;
+            state["x2"] = secondaryPosition.x;
+            state["y2"] = secondaryPosition.y;
+            state["rotation2"] = secondaryRotation;
+            state["dual"] = secondary ? 1 : 0;
             state["percent"] = percent;
             state["levelId"] = levelID;
             state["levelName"] = levelName;
@@ -805,6 +824,10 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                         auto x = state["x"].asDouble();
                         auto y = state["y"].asDouble();
                         auto angle = state["rotation"].asDouble();
+                        auto x2 = state["x2"].asDouble();
+                        auto y2 = state["y2"].asDouble();
+                        auto angle2 = state["rotation2"].asDouble();
+                        auto dual = state["dual"].asInt();
                         auto pct = state["percent"].asDouble();
                         auto remoteLevelId = state["levelId"].asInt();
                         auto remoteLevelName = state["levelName"].asString();
@@ -830,6 +853,22 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                             g_remoteAvatars[remotePeer] = avatar;
                         } else {
                             avatar = it->second;
+                        }
+                        auto secondaryMarker = typeinfo_cast<CCNode*>(avatar->getChildByID("gd-rtc-remote-secondary"));
+                        if (!secondaryMarker) {
+                            secondaryMarker = CCLayerColor::create({255, 205, 90, 230}, 12.f, 12.f);
+                            secondaryMarker->setID("gd-rtc-remote-secondary");
+                            secondaryMarker->setPosition({0.f, 0.f});
+                            avatar->addChild(secondaryMarker, 0);
+                        }
+                        bool showDual = dual && dual.unwrap() != 0 && x2 && y2;
+                        secondaryMarker->setVisible(showDual);
+                        if (showDual) {
+                            secondaryMarker->setPosition({
+                                static_cast<float>(x2.unwrap() - x.unwrap()),
+                                static_cast<float>(y2.unwrap() - y.unwrap())
+                            });
+                            if (angle2) secondaryMarker->setRotation(static_cast<float>(angle2.unwrap() - angle.unwrap()));
                         }
                         if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
                             std::string displayName = remoteName ? remoteName.unwrap() : "Player";
