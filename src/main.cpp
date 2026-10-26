@@ -290,9 +290,9 @@ namespace {
     std::string makeRoomCode() {
         std::random_device rd;
         std::mt19937 rng(rd());
-        std::uniform_int_distribution<size_t> pick(0, sizeof(kAlphabet) - 2);
+        std::uniform_int_distribution<int> pick(0, 9);
         std::string code;
-        for (int i = 0; i < 6; ++i) code += kAlphabet[pick(rng)];
+        for (int i = 0; i < 5; ++i) code += static_cast<char>('0' + pick(rng));
         return code;
     }
 
@@ -349,7 +349,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (menu) {
             if (auto item = menu->getChildByID("gd-rtc-create")) item->setVisible(!inRoom);
             if (auto item = menu->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
-            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(false);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
@@ -361,14 +361,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (inRoom) codeLabel->setString(("ROOM CODE  " + g_activeRoomCode).c_str());
         }
         if (menu) {
-            if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({-75.f, 0.f});
-            if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({75.f, 0.f});
-            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setPosition({0.f, 0.f});
-            if (auto item = menu->getChildByID("gd-rtc-leave")) item->setPosition({0.f, -40.f});
-            if (auto item = menu->getChildByID("gd-rtc-close")) item->setPosition({0.f, -80.f});
+            if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({-72.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({72.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(false);
+            if (auto item = menu->getChildByID("gd-rtc-leave")) item->setPosition({0.f, -164.f});
+            if (auto item = menu->getChildByID("gd-rtc-close")) item->setVisible(false);
         }
         if (auto subtitle = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-subtitle"))) {
-            subtitle->setString(inRoom ? "Share the code with friends" : "Create a room or enter a friend's code");
+            subtitle->setString(inRoom ? "Invite friends with this room code" : "Create a room or join with a 5-digit code");
         }
     }
 
@@ -429,51 +429,64 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
         // Compact opaque card over the screen-space dimmer.
         auto card = CCLayerColor::create({18, 27, 53, 248});
-        card->setContentSize({360.f, 390.f});
-        card->setPosition({-180.f, -195.f});
+        card->setContentSize({360.f, 420.f});
+        card->setPosition({-180.f, -210.f});
         panel->addChild(card, -1);
 
         auto accent = CCLayerColor::create({65, 190, 255, 255});
         accent->setContentSize({340.f, 3.f});
-        accent->setPosition({-170.f, 190.f});
+        accent->setPosition({-170.f, 205.f});
         panel->addChild(accent, -1);
 
-        auto title = CCLabelBMFont::create("GD-RTC Rooms", "bigFont.fnt");
-        title->setScale(0.8f);
-        title->setPosition({0, 154.f});
+        auto title = CCLabelBMFont::create("GD-RTC", "bigFont.fnt");
+        title->setScale(0.86f);
+        title->setPosition({0, 171.f});
         panel->addChild(title);
 
         auto subtitle = CCLabelBMFont::create("Create a room or enter a friend's code", "goldFont.fnt");
         subtitle->setID("gd-rtc-subtitle");
         subtitle->setScale(0.42f);
-        subtitle->setPosition({0, 126.f});
+        subtitle->setPosition({0, 143.f});
         panel->addChild(subtitle);
 
-        auto input = geode::TextInput::create(190.f, "Enter 6-character room code");
+        auto input = geode::TextInput::create(150.f, "00000");
         input->setID("gd-rtc-room-code-input");
-        input->setCommonFilter(geode::CommonFilter::Alphanumeric);
-        input->setMaxCharCount(6);
+        input->setCommonFilter(geode::CommonFilter::Uint);
+        input->setMaxCharCount(5);
         input->setTextAlign(geode::TextInputAlign::Center);
-        input->setPosition({0, 88.f});
+        input->setPosition({0, 100.f});
         panel->addChild(input);
 
         auto codeLabel = CCLabelBMFont::create("", "bigFont.fnt");
         codeLabel->setID("gd-rtc-room-code-label");
         codeLabel->setScale(0.72f);
-        codeLabel->setPosition({0.f, 88.f});
+        codeLabel->setPosition({0.f, 111.f});
         codeLabel->setVisible(false);
         panel->addChild(codeLabel);
 
         auto membersBack = CCLayerColor::create({8, 14, 31, 220});
-        membersBack->setContentSize({310.f, 104.f});
-        membersBack->setPosition({-155.f, -32.f});
+        membersBack->setID("gd-rtc-members-back");
+        membersBack->setContentSize({320.f, 218.f});
+        membersBack->setPosition({-160.f, -151.f});
         panel->addChild(membersBack, 0);
 
         auto members = CCLabelBMFont::create("Players in room:", "goldFont.fnt");
         members->setID("gd-rtc-room-members");
-        members->setScale(0.42f);
-        members->setPosition({0, 59.f});
+        members->setScale(0.48f);
+        members->setPosition({-126.f, 72.f});
         panel->addChild(members);
+        auto selfName = CCLabelBMFont::create("", "goldFont.fnt");
+        selfName->setID("gd-rtc-self-name");
+        selfName->setAnchorPoint({0.f, 0.5f});
+        selfName->setScale(0.46f);
+        selfName->setPosition({-126.f, 48.f});
+        panel->addChild(selfName);
+        auto selfState = CCLabelBMFont::create("", "goldFont.fnt");
+        selfState->setID("gd-rtc-self-state");
+        selfState->setAnchorPoint({0.f, 0.5f});
+        selfState->setScale(0.34f);
+        selfState->setPosition({-116.f, 34.f});
+        panel->addChild(selfState);
 
         auto memberMenu = CCMenu::create();
         memberMenu->setID("gd-rtc-member-menu");
@@ -482,13 +495,13 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
         auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
         status->setID("gd-rtc-room-status");
-        status->setScale(0.42f);
-        status->setPosition({0, -178.f});
+        status->setScale(0.38f);
+        status->setPosition({0, -194.f});
         panel->addChild(status);
 
         auto menu = CCMenu::create();
         menu->setID("gd-rtc-room-panel-menu");
-        menu->setPosition({0, -70.f});
+        menu->setPosition({0, 25.f});
         panel->addChild(menu);
 
         auto createBtn = CCMenuItemSpriteExtra::create(
@@ -519,12 +532,16 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         leaveBtn->setPosition({70, -40});
         menu->addChild(leaveBtn);
 
-        auto closeBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Close", 80, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
-            this, menu_selector(GDRTCMenuLayer::onCloseRooms));
+        auto closeSprite = CCSprite::createWithSpriteFrameName("GJ_closeBtn_001.png");
+        if (!closeSprite) closeSprite = CCSprite::createWithSpriteFrameName("GJ_deleteBtn_001.png");
+        auto closeBtn = CCMenuItemSpriteExtra::create(closeSprite, this, menu_selector(GDRTCMenuLayer::onCloseRooms));
         closeBtn->setID("gd-rtc-close");
-        closeBtn->setPosition({0, -80});
-        menu->addChild(closeBtn);
+        closeBtn->setPosition({-160.f, 190.f});
+        closeBtn->setScale(0.72f);
+        auto closeMenu = CCMenu::create(closeBtn, nullptr);
+        closeMenu->setID("gd-rtc-close-menu");
+        closeMenu->setPosition({0, 0});
+        panel->addChild(closeMenu, 20);
 
         updateRoomControls(!g_activeRoomCode.empty());
         this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 15.0f);
@@ -597,8 +614,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto rawCode = input->getString();
         std::string code(rawCode.c_str());
         for (auto& c : code) c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        if (code.size() != 6) {
-            setRoomStatus("Enter the six-character room code.");
+        if (code.size() != 5 || !std::all_of(code.begin(), code.end(), [](unsigned char ch) { return std::isdigit(ch); })) {
+            setRoomStatus("Enter the 5-digit room code.");
             return;
         }
 
@@ -717,11 +734,20 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     return;
                 }
                 auto members = parsed.unwrap();
-                std::string names = "Players in room";
+                std::string names = "Players";
                 unsigned int count = 0;
                 g_roomMemberIds.clear();
                 if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
                     if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-member-menu"))) menu->removeAllChildren();
+                    if (auto own = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-self-name"))) own->setString((playerName() + " (you)").c_str());
+                    if (auto ownState = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-self-state"))) {
+                        auto play = PlayLayer::get();
+                        if (play && play->m_level) {
+                            auto levelName = std::string(play->m_level->m_levelName.c_str());
+                            if (levelName.size() > 30) levelName.resize(30);
+                            ownState->setString(("PLAYING " + levelName + " (" + std::to_string(static_cast<int>(play->m_level->m_levelID)) + ")").c_str());
+                        } else ownState->setString("");
+                    }
                 }
                 for (auto const& [id, value] : members) {
                     if (id == g_activePeerId) continue;
@@ -734,32 +760,46 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     if (name.size() > 16) name.resize(16);
                     auto state = value["currentLevel"];
                     auto level = state["name"].asString();
+                    auto levelID = state["levelID"].asInt();
+                    auto levelType = state["levelType"].asString();
                     auto updated = state["updatedAt"].asDouble();
-                    std::string row = name;
-                    if (level && updated && nowSeconds() - updated.unwrap() < 86400.0) {
+                    bool playing = level && levelID && updated && nowSeconds() - updated.unwrap() < 35.0;
+                    std::string detail;
+                    if (playing) {
                         std::string levelName = level.unwrap();
-                        if (levelName.size() > 14) levelName.resize(14);
-                        row += " — " + levelName;
-                    } else {
-                        row += " — waiting for level";
+                        if (levelName.size() > 28) levelName.resize(28);
+                        detail = "PLAYING " + levelName + " (" + std::to_string(levelID.unwrap()) + ")";
+                        if (levelType) detail += " [" + levelType.unwrap() + "]";
                     }
+                    auto rowIndex = count;
                     g_roomMemberIds.push_back(id);
                     if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
                         if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-member-menu"))) {
-                            auto button = CCMenuItemSpriteExtra::create(
-                                ButtonSprite::create(row.c_str(), 275, true, "bigFont.fnt", "GJ_button_01.png", 20.f, .38f),
+                            auto nameLabel = CCLabelBMFont::create(name.c_str(), "goldFont.fnt");
+                            nameLabel->setAnchorPoint({0.f, 0.5f});
+                            nameLabel->setScale(0.42f);
+                            nameLabel->setPosition({-126.f, 18.f - static_cast<float>(rowIndex) * 38.f});
+                            menu->addChild(nameLabel);
+                            auto detailLabel = CCLabelBMFont::create(detail.c_str(), "goldFont.fnt");
+                            detailLabel->setAnchorPoint({0.f, 0.5f});
+                            detailLabel->setScale(0.31f);
+                            detailLabel->setPosition({-116.f, 5.f - static_cast<float>(rowIndex) * 38.f});
+                            menu->addChild(detailLabel);
+                            auto joinButton = CCMenuItemSpriteExtra::create(
+                                ButtonSprite::create("Join", 68, true, "bigFont.fnt", playing ? "GJ_button_01.png" : "GJ_button_04.png", 22.f, .58f),
                                 self, menu_selector(GDRTCMenuLayer::onGoToPlayerLevel));
-                            button->setTag(static_cast<int>(g_roomMemberIds.size() - 1));
-                            button->setPosition({0.f, 39.f - static_cast<float>(count) * 20.f});
-                            menu->addChild(button);
+                            joinButton->setTag(static_cast<int>(g_roomMemberIds.size() - 1));
+                            joinButton->setPosition({119.f, 12.f - static_cast<float>(rowIndex) * 38.f});
+                            joinButton->setEnabled(playing);
+                            menu->addChild(joinButton);
                         }
                     }
                     ++count;
                 }
-                names += " (" + std::to_string(count + 1) + "/8)";
-                if (!count) names += "\nWaiting for friends to join";
-                self->setRoomMembers(names);
-                if (g_activeRoomCode == code) self->setRoomStatus("Room " + code + " · " + std::to_string(count + 1) + "/8 players");
+                if (auto panel = self->getChildByID("gd-rtc-room-panel")) {
+                    if (auto label = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-room-members"))) label->setString(("Players (" + std::to_string(count + 1) + "/8)").c_str());
+                }
+                if (g_activeRoomCode == code) self->setRoomStatus("Room " + code);
             });
     }
 
@@ -770,7 +810,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (index < 0 || static_cast<size_t>(index) >= g_roomMemberIds.size()) return;
         auto code = g_activeRoomCode;
         auto peer = g_roomMemberIds[static_cast<size_t>(index)];
-        setRoomStatus("Loading that player's level...");
+        setRoomStatus("Joining level...");
         Ref<GDRTCMenuLayer> self = this;
         async::spawn(geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(12))
@@ -788,19 +828,25 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 }
                 auto nameValue = parsed.unwrap()["name"].asString();
                 auto dataValue = parsed.unwrap()["levelData"].asString();
-                if (!dataValue || dataValue.unwrap().empty()) {
-                    self->setRoomStatus("That player's level data isn't ready yet.");
+                auto idValue = parsed.unwrap()["levelID"].asInt();
+                auto typeValue = parsed.unwrap()["levelType"].asString();
+                std::string name = nameValue ? nameValue.unwrap() : "Shared level";
+                std::string data = dataValue ? dataValue.unwrap() : "";
+                GJGameLevel* level = nullptr;
+                if (typeValue && typeValue.unwrap() == "main" && idValue) {
+                    level = GameLevelManager::sharedState()->getMainLevel(static_cast<int>(idValue.unwrap()), false);
+                }
+                if (!level && !data.empty()) {
+                    level = GJGameLevel::create();
+                    level->m_levelName = name.c_str();
+                    level->m_levelString = data.c_str();
+                    level->m_levelID = idValue ? static_cast<int>(idValue.unwrap()) : 0;
+                }
+                if (!level) {
+                    self->setRoomStatus("That level is not available yet.");
                     return;
                 }
-                std::string name = nameValue ? nameValue.unwrap() : "Shared level";
-                std::string data = dataValue.unwrap();
-                cacheSharedLevel(name, data);
-                auto level = GJGameLevel::create();
-                level->m_levelName = name.c_str();
-                level->m_levelString = data.c_str();
-                level->m_levelID = 0;
                 auto scene = PlayLayer::scene(level, false, false);
-                if (!scene) scene = LevelEditorLayer::scene(level, false);
                 if (scene) CCDirector::sharedDirector()->pushScene(scene);
             });
     }
@@ -885,6 +931,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         if (g_activeRoomCode.empty() || g_activePeerId.empty() || !this->m_player1 || !this->m_level) return;
 
         static double lastPublishedLevelAt = 0.0;
+        static double lastCurrentLevelHeartbeatAt = 0.0;
         static std::string lastPublishedLevelKey;
         static double lastStateSendAt = 0.0;
         static double lastSignalPollAt = 0.0;
@@ -895,12 +942,16 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         auto levelName = std::string(this->m_level->m_levelName.c_str());
         auto levelData = std::string(this->m_level->m_levelString.c_str());
         auto levelKey = code + "/" + peer + "/" + std::to_string(static_cast<int>(this->m_level->m_levelID)) + "/" + levelName;
+        auto levelId = static_cast<int>(this->m_level->m_levelID);
+        std::string levelType = levelId == 0 ? "custom" : (levelId > 0 && levelId <= 22 ? "main" : "online");
         if (levelKey != lastPublishedLevelKey && !levelData.empty() && levelData.size() <= 950000) {
             lastPublishedLevelKey = levelKey;
+            lastPublishedLevelAt = now;
             matjson::Value levelInfo = matjson::Value::object();
             levelInfo["name"] = levelName;
             levelInfo["levelData"] = levelData;
-            levelInfo["levelID"] = static_cast<int>(this->m_level->m_levelID);
+            levelInfo["levelID"] = levelId;
+            levelInfo["levelType"] = levelType;
             levelInfo["updatedAt"] = now;
             // Large level payloads live outside /members so normal room-list
             // reads never download megabytes of custom level data.
@@ -911,12 +962,26 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 [](geode::utils::web::WebResponse) {});
             matjson::Value levelMeta = matjson::Value::object();
             levelMeta["name"] = levelName;
-            levelMeta["levelID"] = static_cast<int>(this->m_level->m_levelID);
+            levelMeta["levelID"] = levelId;
+            levelMeta["levelType"] = levelType;
             levelMeta["updatedAt"] = now;
             async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(8))
                 .bodyJSON(levelMeta)
                 .put(roomUrl(code, "/members/" + peer + "/currentLevel")),
+                [](geode::utils::web::WebResponse) {});
+        }
+
+        // Refresh only low-frequency "currently playing" metadata; gameplay packets stay peer-to-peer.
+        if (now - lastCurrentLevelHeartbeatAt >= 10.0) {
+            lastCurrentLevelHeartbeatAt = now;
+            matjson::Value current = matjson::Value::object();
+            current["name"] = levelName;
+            current["levelID"] = levelId;
+            current["levelType"] = levelType;
+            current["updatedAt"] = now;
+            async::spawn(geode::utils::web::WebRequest().timeout(std::chrono::seconds(6))
+                .bodyJSON(current).put(roomUrl(code, "/members/" + peer + "/currentLevel")),
                 [](geode::utils::web::WebResponse) {});
         }
 
@@ -996,10 +1061,8 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             if (localLevelName.size() > 63) localLevelName.resize(63);
             if (levelId != static_cast<int>(this->m_level->m_levelID) || localLevelName != remoteLevelName) continue;
 
-            // PlayerObject positions are in GJBaseGameLayer's coordinate space.
-            // Remote icons and nameplates must be siblings of the real players,
-            // not children of PlayLayer (which applies a different camera transform).
-            auto worldLayer = this->m_player1->m_gameLayer;
+            // Keep remote visuals in the exact same parent coordinate space as PlayerObject.
+            auto worldLayer = this->m_player1->getParent();
             if (!worldLayer) worldLayer = this;
             auto it = g_remoteAvatars.find(remoteId);
             CCNode* avatar = it == g_remoteAvatars.end() ? nullptr : it->second;
@@ -1061,7 +1124,6 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 auto nameIt = g_peerNames.find(remoteId);
                 std::string text = nameIt == g_peerNames.end() ? "Player" : nameIt->second;
                 if (text.size() > 16) text.resize(16);
-                text += "  " + std::to_string(std::clamp(static_cast<int>(percent), 0, 100)) + "%";
                 name->setString(text.c_str());
             }
             g_remoteAvatarLastSeen[remoteId] = now;
