@@ -34,6 +34,10 @@ namespace {
     bool g_roomOperationPending = false;
     std::map<std::string, std::string> g_peerNames;
     std::map<std::string, CCNode*> g_remoteAvatars;
+    std::map<std::string, CCNode*> g_remoteSecondaryAvatars;
+    std::map<std::string, CCLabelBMFont*> g_remoteNameLabels;
+    std::map<std::string, std::pair<CCPoint, float>> g_remoteAvatarTargets;
+    std::map<std::string, std::pair<CCPoint, float>> g_remoteSecondaryTargets;
     std::map<std::string, double> g_remoteAvatarLastSeen;
     struct GDRTCPeerSession {
         std::shared_ptr<rtc::PeerConnection> pc;
@@ -926,10 +930,18 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             auto gm = GameManager::sharedState();
             std::ostringstream packet;
             packet.precision(6);
+            int iconType = static_cast<int>(IconType::Cube);
+            if (p1->m_isShip) iconType = static_cast<int>(IconType::Ship);
+            else if (p1->m_isBall) iconType = static_cast<int>(IconType::Ball);
+            else if (p1->m_isBird) iconType = static_cast<int>(IconType::Ufo);
+            else if (p1->m_isDart) iconType = static_cast<int>(IconType::Wave);
+            else if (p1->m_isRobot) iconType = static_cast<int>(IconType::Robot);
+            else if (p1->m_isSpider) iconType = static_cast<int>(IconType::Spider);
+            else if (p1->m_isSwing) iconType = static_cast<int>(IconType::Swing);
             packet << "S|" << pos1.x << "|" << pos1.y << "|" << p1->getRotation()
                    << "|" << pos2.x << "|" << pos2.y << "|" << (p2 ? p2->getRotation() : 0.f)
                    << "|" << (p2 ? 1 : 0) << "|" << this->getCurrentPercent()
-                   << "|" << gm->getPlayerFrame() << "|" << gm->getPlayerColor()
+                   << "|" << gm->getPlayerFrame() << "|" << iconType << "|" << gm->getPlayerColor()
                    << "|" << gm->getPlayerColor2() << "|" << (gm->m_playerGlow ? 1 : 0)
                    << "|" << static_cast<int>(this->m_level->m_levelID) << "|";
             std::string safeLevelName = this->m_level->m_levelName.c_str();
@@ -951,73 +963,137 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         }
         for (auto const& [remoteId, payload] : incoming) {
             float x = 0.f, y = 0.f, rotation = 0.f, x2 = 0.f, y2 = 0.f, rotation2 = 0.f, percent = 0.f;
-            int dual = 0, icon = 1, color1 = 0, color2 = 3, glow = 0, levelId = -1;
+            int dual = 0, icon = 1, iconType = static_cast<int>(IconType::Cube), color1 = 0, color2 = 3, glow = 0, levelId = -1;
             char remoteLevelName[64] = {};
-            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%63[^|]",
-                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &color1, &color2, &glow, &levelId, remoteLevelName) != 14) continue;
+            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%d|%63[^|]",
+                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &iconType, &color1, &color2, &glow, &levelId, remoteLevelName) != 15) continue;
             std::string localLevelName = this->m_level->m_levelName.c_str();
             for (auto& ch : localLevelName) if (ch == '|' || ch == '\n' || ch == '\r') ch = ' ';
             if (localLevelName.size() > 63) localLevelName.resize(63);
             if (levelId != static_cast<int>(this->m_level->m_levelID) || localLevelName != remoteLevelName) continue;
 
+            // PlayerObject positions are in GJBaseGameLayer's coordinate space.
+            // Remote icons and nameplates must be siblings of the real players,
+            // not children of PlayLayer (which applies a different camera transform).
+            auto worldLayer = this->m_player1->m_gameLayer;
+            if (!worldLayer) worldLayer = this;
             auto it = g_remoteAvatars.find(remoteId);
             CCNode* avatar = it == g_remoteAvatars.end() ? nullptr : it->second;
             if (!avatar) {
-                avatar = SimplePlayer::create(icon);
-                if (!avatar) avatar = CCSprite::createWithSpriteFrameName("player_01_001.png");
-                if (!avatar) continue;
-                avatar->setID(("gd-rtc-remote-" + remoteId).c_str());
-                avatar->setScale(0.68f);
-                auto label = CCLabelBMFont::create("", "goldFont.fnt");
-                label->setID("gd-rtc-remote-name");
-                label->setScale(0.38f);
-                label->setPosition({0.f, 22.f});
-                avatar->addChild(label, 2);
+                auto visual = SimplePlayer::create(icon);
+                if (!visual) continue;
+                visual->updatePlayerFrame(icon, static_cast<IconType>(iconType));
+                visual->setScale(0.72f);
+                visual->setID(("gd-rtc-remote-" + remoteId).c_str());
+                visual->setAnchorPoint({0.5f, 0.5f});
+                worldLayer->addChild(visual, this->m_player1->getZOrder() + 1);
+                avatar = visual;
+                g_remoteAvatars[remoteId] = avatar;
+
                 auto secondary = SimplePlayer::create(icon);
                 if (secondary) {
-                    secondary->setID("gd-rtc-remote-secondary");
+                    secondary->updatePlayerFrame(icon, static_cast<IconType>(iconType));
                     secondary->setScale(0.72f);
+                    secondary->setID(("gd-rtc-remote-secondary-" + remoteId).c_str());
                     secondary->setVisible(false);
-                    avatar->addChild(secondary, 1);
+                    worldLayer->addChild(secondary, this->m_player1->getZOrder() + 1);
+                    g_remoteSecondaryAvatars[remoteId] = secondary;
                 }
-                this->addChild(avatar, 1000);
-                g_remoteAvatars[remoteId] = avatar;
+
+                auto label = CCLabelBMFont::create("", "goldFont.fnt");
+                if (label) {
+                    label->setID(("gd-rtc-remote-name-" + remoteId).c_str());
+                    label->setScale(0.38f);
+                    label->setAnchorPoint({0.5f, 0.0f});
+                    worldLayer->addChild(label, this->m_player1->getZOrder() + 2);
+                    g_remoteNameLabels[remoteId] = label;
+                }
             }
             avatar->setVisible(true);
-            avatar->setPosition({x, y});
-            avatar->setRotation(rotation);
+            g_remoteAvatarTargets[remoteId] = {{x, y}, rotation};
             if (auto simple = typeinfo_cast<SimplePlayer*>(avatar)) {
                 auto gm = GameManager::sharedState();
-                simple->updatePlayerFrame(icon, IconType::Cube);
+                simple->updatePlayerFrame(icon, static_cast<IconType>(iconType));
                 simple->setColor(gm->colorForIdx(color1));
                 simple->setSecondColor(gm->colorForIdx(color2));
                 if (glow) simple->setGlowOutline(gm->colorForIdx(color2));
             }
-            if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
-                auto nameIt = g_peerNames.find(remoteId);
-                std::string name = nameIt == g_peerNames.end() ? "Player" : nameIt->second;
-                if (name.size() > 16) name.resize(16);
-                name += " " + std::to_string(static_cast<int>(percent)) + "%";
-                label->setString(name.c_str());
-            }
-            if (auto secondary = typeinfo_cast<SimplePlayer*>(avatar->getChildByID("gd-rtc-remote-secondary"))) {
-                secondary->setVisible(dual != 0);
+            auto secondaryIt = g_remoteSecondaryAvatars.find(remoteId);
+            if (secondaryIt != g_remoteSecondaryAvatars.end() && secondaryIt->second) {
+                secondaryIt->second->setVisible(dual != 0);
                 if (dual) {
-                    secondary->setPosition({x2 - x, y2 - y});
-                    secondary->setRotation(rotation2);
-                    secondary->updatePlayerFrame(icon, IconType::Cube);
-                    auto gm = GameManager::sharedState();
-                    secondary->setColor(gm->colorForIdx(color1));
-                    secondary->setSecondColor(gm->colorForIdx(color2));
+                    auto secondary = typeinfo_cast<SimplePlayer*>(secondaryIt->second);
+                    if (secondary) {
+                        secondary->updatePlayerFrame(icon, static_cast<IconType>(iconType));
+                        auto gm = GameManager::sharedState();
+                        secondary->setColor(gm->colorForIdx(color1));
+                        secondary->setSecondColor(gm->colorForIdx(color2));
+                        if (glow) secondary->setGlowOutline(gm->colorForIdx(color2));
+                    }
+                    g_remoteSecondaryTargets[remoteId] = {{x2, y2}, rotation2};
                 }
             }
+            if (auto name = g_remoteNameLabels[remoteId]) {
+                auto nameIt = g_peerNames.find(remoteId);
+                std::string text = nameIt == g_peerNames.end() ? "Player" : nameIt->second;
+                if (text.size() > 16) text.resize(16);
+                text += "  " + std::to_string(std::clamp(static_cast<int>(percent), 0, 100)) + "%";
+                name->setString(text.c_str());
+            }
             g_remoteAvatarLastSeen[remoteId] = now;
+        }
+
+        // Smooth over packet jitter instead of teleporting the remote icon for
+        // every packet. The second icon and nameplate are independent world-layer
+        // siblings so dual mode and rotation cannot drag/rotate the nameplate.
+        for (auto const& [id, target] : g_remoteAvatarTargets) {
+            auto it = g_remoteAvatars.find(id);
+            if (it == g_remoteAvatars.end() || !it->second) continue;
+            auto avatar = it->second;
+            auto current = avatar->getPosition();
+            avatar->setPosition({
+                current.x + (target.first.x - current.x) * 0.42f,
+                current.y + (target.first.y - current.y) * 0.42f
+            });
+            auto rotation = avatar->getRotation();
+            auto delta = std::fmod(target.second - rotation + 540.f, 360.f) - 180.f;
+            avatar->setRotation(rotation + delta * 0.42f);
+            auto name = g_remoteNameLabels.find(id);
+            if (name != g_remoteNameLabels.end() && name->second) {
+                name->second->setPosition({avatar->getPositionX(), avatar->getPositionY() + 24.f});
+            }
+        }
+        for (auto const& [id, target] : g_remoteSecondaryTargets) {
+            auto it = g_remoteSecondaryAvatars.find(id);
+            if (it == g_remoteSecondaryAvatars.end() || !it->second || !it->second->isVisible()) continue;
+            auto avatar = it->second;
+            auto current = avatar->getPosition();
+            avatar->setPosition({
+                current.x + (target.first.x - current.x) * 0.42f,
+                current.y + (target.first.y - current.y) * 0.42f
+            });
+            auto rotation = avatar->getRotation();
+            auto delta = std::fmod(target.second - rotation + 540.f, 360.f) - 180.f;
+            avatar->setRotation(rotation + delta * 0.42f);
         }
         for (auto it = g_remoteAvatars.begin(); it != g_remoteAvatars.end();) {
             auto last = g_remoteAvatarLastSeen.find(it->first);
             if (last == g_remoteAvatarLastSeen.end() || now - last->second > 2.0) {
+                auto id = it->first;
                 if (it->second) it->second->removeFromParent();
-                g_remoteAvatarLastSeen.erase(it->first);
+                auto secondary = g_remoteSecondaryAvatars.find(id);
+                if (secondary != g_remoteSecondaryAvatars.end()) {
+                    if (secondary->second) secondary->second->removeFromParent();
+                    g_remoteSecondaryAvatars.erase(secondary);
+                }
+                auto label = g_remoteNameLabels.find(id);
+                if (label != g_remoteNameLabels.end()) {
+                    if (label->second) label->second->removeFromParent();
+                    g_remoteNameLabels.erase(label);
+                }
+                g_remoteAvatarTargets.erase(id);
+                g_remoteSecondaryTargets.erase(id);
+                g_remoteAvatarLastSeen.erase(id);
                 it = g_remoteAvatars.erase(it);
             } else ++it;
         }
@@ -1026,6 +1102,10 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
     void onExit() {
         PlayLayer::onExit();
         g_remoteAvatars.clear();
+        g_remoteSecondaryAvatars.clear();
+        g_remoteNameLabels.clear();
+        g_remoteAvatarTargets.clear();
+        g_remoteSecondaryTargets.clear();
         g_remoteAvatarLastSeen.clear();
     }
 };
