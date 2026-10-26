@@ -370,6 +370,9 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         if (auto subtitle = typeinfo_cast<CCLabelBMFont*>(panel->getChildByID("gd-rtc-subtitle"))) {
             subtitle->setString(inRoom ? "Invite friends with this room code" : "Create a room or join with a 5-digit code");
         }
+        for (auto id : {"gd-rtc-members-back", "gd-rtc-room-members", "gd-rtc-self-name", "gd-rtc-self-state", "gd-rtc-member-menu"}) {
+            if (auto node = panel->getChildByID(id)) node->setVisible(inRoom);
+        }
     }
 
     void setRoomStatus(std::string const& message) {
@@ -745,7 +748,10 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                         if (play && play->m_level) {
                             auto levelName = std::string(play->m_level->m_levelName.c_str());
                             if (levelName.size() > 30) levelName.resize(30);
-                            ownState->setString(("PLAYING " + levelName + " (" + std::to_string(static_cast<int>(play->m_level->m_levelID)) + ")").c_str());
+                            auto levelID = static_cast<int>(play->m_level->m_levelID);
+                            auto levelTypeValue = static_cast<int>(play->m_level->m_levelType);
+                            std::string typeName = levelTypeValue == 1 ? "main" : (levelTypeValue == 4 ? "online" : "custom");
+                            ownState->setString(("PLAYING " + levelName + " (" + std::to_string(levelID) + ") [" + typeName + "]").c_str());
                         } else ownState->setString("");
                     }
                 }
@@ -754,7 +760,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     auto nameValue = value["name"].asString();
                     g_peerNames[id] = nameValue ? nameValue.unwrap() : "Player";
                     rtcEnsurePeer(id);
-                    if (count >= 5) break;
+                    if (count >= 7) break;
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
                     if (name.size() > 16) name.resize(16);
@@ -777,19 +783,19 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                         if (auto menu = typeinfo_cast<CCMenu*>(panel->getChildByID("gd-rtc-member-menu"))) {
                             auto nameLabel = CCLabelBMFont::create(name.c_str(), "goldFont.fnt");
                             nameLabel->setAnchorPoint({0.f, 0.5f});
-                            nameLabel->setScale(0.42f);
-                            nameLabel->setPosition({-126.f, 18.f - static_cast<float>(rowIndex) * 38.f});
+                            nameLabel->setScale(0.34f);
+                            nameLabel->setPosition({-126.f, 24.f - static_cast<float>(rowIndex) * 22.f});
                             menu->addChild(nameLabel);
                             auto detailLabel = CCLabelBMFont::create(detail.c_str(), "goldFont.fnt");
                             detailLabel->setAnchorPoint({0.f, 0.5f});
-                            detailLabel->setScale(0.31f);
-                            detailLabel->setPosition({-116.f, 5.f - static_cast<float>(rowIndex) * 38.f});
+                            detailLabel->setScale(0.25f);
+                            detailLabel->setPosition({-116.f, 14.f - static_cast<float>(rowIndex) * 22.f});
                             menu->addChild(detailLabel);
                             auto joinButton = CCMenuItemSpriteExtra::create(
                                 ButtonSprite::create("Join", 68, true, "bigFont.fnt", playing ? "GJ_button_01.png" : "GJ_button_04.png", 22.f, .58f),
                                 self, menu_selector(GDRTCMenuLayer::onGoToPlayerLevel));
                             joinButton->setTag(static_cast<int>(g_roomMemberIds.size() - 1));
-                            joinButton->setPosition({119.f, 12.f - static_cast<float>(rowIndex) * 38.f});
+                            joinButton->setPosition({119.f, 20.f - static_cast<float>(rowIndex) * 22.f});
                             joinButton->setEnabled(playing);
                             menu->addChild(joinButton);
                         }
@@ -943,8 +949,9 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         auto levelData = std::string(this->m_level->m_levelString.c_str());
         auto levelKey = code + "/" + peer + "/" + std::to_string(static_cast<int>(this->m_level->m_levelID)) + "/" + levelName;
         auto levelId = static_cast<int>(this->m_level->m_levelID);
-        std::string levelType = levelId == 0 ? "custom" : (levelId > 0 && levelId <= 22 ? "main" : "online");
-        if (levelKey != lastPublishedLevelKey && !levelData.empty() && levelData.size() <= 950000) {
+        auto levelTypeValue = static_cast<int>(this->m_level->m_levelType);
+        std::string levelType = levelTypeValue == 1 ? "main" : (levelTypeValue == 4 ? "online" : "custom");
+        if (levelKey != lastPublishedLevelKey && levelData.size() <= 950000) {
             lastPublishedLevelKey = levelKey;
             lastPublishedLevelAt = now;
             matjson::Value levelInfo = matjson::Value::object();
@@ -1095,6 +1102,16 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                     worldLayer->addChild(label, this->m_player1->getZOrder() + 2);
                     g_remoteNameLabels[remoteId] = label;
                 }
+                if (this->m_progressBar && !this->m_level->isPlatformer()) {
+                    auto progressIcon = SimplePlayer::create(icon);
+                    if (progressIcon) {
+                        progressIcon->updatePlayerFrame(icon, static_cast<IconType>(iconType));
+                        progressIcon->setScale(0.28f);
+                        progressIcon->setID(("gd-rtc-progress-" + remoteId).c_str());
+                        this->m_progressBar->addChild(progressIcon, 20);
+                        g_remoteProgressIcons[remoteId] = progressIcon;
+                    }
+                }
             }
             avatar->setVisible(true);
             g_remoteAvatarTargets[remoteId] = {{x, y}, rotation};
@@ -1125,6 +1142,21 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                 std::string text = nameIt == g_peerNames.end() ? "Player" : nameIt->second;
                 if (text.size() > 16) text.resize(16);
                 name->setString(text.c_str());
+            }
+            auto progressIt = g_remoteProgressIcons.find(remoteId);
+            if (progressIt != g_remoteProgressIcons.end() && progressIt->second && this->m_progressBar) {
+                bool classic = !this->m_level->isPlatformer();
+                progressIt->second->setVisible(classic);
+                if (classic) {
+                    auto width = this->m_progressBar->getContentSize().width;
+                    progressIt->second->setPosition({width * std::clamp(percent, 0.f, 100.f) / 100.f, -11.f});
+                    if (auto simple = typeinfo_cast<SimplePlayer*>(progressIt->second)) {
+                        simple->updatePlayerFrame(icon, static_cast<IconType>(iconType));
+                        auto gm = GameManager::sharedState();
+                        simple->setColor(gm->colorForIdx(color1));
+                        simple->setSecondColor(gm->colorForIdx(color2));
+                    }
+                }
             }
             g_remoteAvatarLastSeen[remoteId] = now;
         }
@@ -1177,6 +1209,11 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                     if (label->second) label->second->removeFromParent();
                     g_remoteNameLabels.erase(label);
                 }
+                auto progress = g_remoteProgressIcons.find(id);
+                if (progress != g_remoteProgressIcons.end()) {
+                    if (progress->second) progress->second->removeFromParent();
+                    g_remoteProgressIcons.erase(progress);
+                }
                 g_remoteAvatarTargets.erase(id);
                 g_remoteSecondaryTargets.erase(id);
                 g_remoteAvatarLastSeen.erase(id);
@@ -1190,6 +1227,7 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         g_remoteAvatars.clear();
         g_remoteSecondaryAvatars.clear();
         g_remoteNameLabels.clear();
+        g_remoteProgressIcons.clear();
         g_remoteAvatarTargets.clear();
         g_remoteSecondaryTargets.clear();
         g_remoteAvatarLastSeen.clear();
