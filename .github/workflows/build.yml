@@ -1,9 +1,8 @@
 name: Build GD-RTC
 
 on:
-  push:
-    branches: ["**"]
-  pull_request:
+  # Builds are manual while multiplayer functionality is under active development.
+  # This avoids spending CI minutes on every intermediate commit.
   workflow_dispatch:
 
 permissions:
@@ -19,12 +18,6 @@ jobs:
           - name: Windows
             runner: windows-latest
             target: Win64
-          - name: macOS
-            runner: macos-latest
-            target: MacOS
-          - name: iOS
-            runner: macos-latest
-            target: iOS
           - name: Android64
             runner: ubuntu-latest
             target: Android64
