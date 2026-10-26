@@ -419,6 +419,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         setMenuTouchRecursive(this, enabled, this->getChildByID("gd-rtc-room-panel"));
     }
 
+    void keyBackClicked() {
+        if (this->getChildByID("gd-rtc-room-panel")) {
+            onCloseRooms(nullptr);
+            return;
+        }
+        MenuLayer::keyBackClicked();
+    }
+
     void onGDRTC(CCObject*) {
         if (auto existing = this->getChildByID("gd-rtc-room-panel")) {
             existing->removeFromParent();
@@ -428,6 +436,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         }
 
         setBackgroundMenusEnabled(false);
+        this->setKeypadEnabled(true);
         auto win = CCDirector::sharedDirector()->getWinSize();
         // Keep the dimmer in screen coordinates. Putting it inside the scaled
         // panel used to shrink the "full-screen" shade on smaller displays.
@@ -1259,6 +1268,14 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         menu->addChild(room);
     }
 
+    void keyBackClicked() {
+        if (this->getChildByID("gd-rtc-pause-room-panel")) {
+            onCloseRoomMenu(nullptr);
+            return;
+        }
+        PauseLayer::keyBackClicked();
+    }
+
     void setPauseMenusEnabled(CCNode* node, bool enabled, CCNode* skip) {
         if (!node || node == skip) return;
         if (auto menu = typeinfo_cast<CCMenu*>(node)) menu->setTouchEnabled(enabled);
@@ -1303,6 +1320,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
     void onOpenRoomMenu(CCObject*) {
         if (this->getChildByID("gd-rtc-pause-room-panel")) return;
         setPauseMenusEnabled(this, false, nullptr);
+        this->setKeypadEnabled(true);
         auto win = CCDirector::sharedDirector()->getWinSize();
         auto shade = CCLayerColor::create({0, 0, 0, 190});
         shade->setID("gd-rtc-pause-room-shade");
