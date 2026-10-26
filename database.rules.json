@@ -38,11 +38,11 @@
         },
         "states": {
           "$peerId": {
-            ".validate": "newData.hasChildren(['x', 'y', 'rotation', 'progress', 'updatedAt'])",
+            ".validate": "newData.hasChildren(['x', 'y', 'rotation', 'percent', 'updatedAt'])",
             "x": { ".validate": "newData.isNumber()" },
             "y": { ".validate": "newData.isNumber()" },
             "rotation": { ".validate": "newData.isNumber()" },
-            "progress": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+            "percent": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100 },
             "updatedAt": { ".validate": "newData.isNumber()" }
           }
         },
