@@ -708,8 +708,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
 
 class $modify(GDRTCPauseLayer, PauseLayer) {
-    bool init() {
-        if (!PauseLayer::init()) return false;
+    bool init(bool unfocused) {
+        if (!PauseLayer::init(unfocused)) return false;
         if (g_activeRoomCode.empty()) return true;
 
         auto win = CCDirector::sharedDirector()->getWinSize();
