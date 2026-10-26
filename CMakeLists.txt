@@ -49,9 +49,10 @@ FetchContent_Declare(
 # The Geode Windows toolchain reports an MSVC simulation ID while using
 # clang, so let Mbed TLS select its actual Clang compile flags.
 set(_gd_rtc_simulate_id "${CMAKE_C_SIMULATE_ID}")
+# Keep this cleared while configuring both native C dependencies. Otherwise
+# usrsctp sees MSVC's simulation ID and passes /W flags to clang.exe.
 set(CMAKE_C_SIMULATE_ID "")
 FetchContent_MakeAvailable(mbedtls)
-set(CMAKE_C_SIMULATE_ID "${_gd_rtc_simulate_id}")
 # The Geode Windows toolchain invokes clang.exe, not clang-cl. MSVC-style
 # /W and /wd flags are invalid for C sources in libdatachannel's dependencies.
 # This mod has no C sources, so leave third-party C compilation on clang defaults.
@@ -75,6 +76,7 @@ FetchContent_Declare(
     GIT_SUBMODULES_RECURSE TRUE
 )
 FetchContent_MakeAvailable(libdatachannel)
+set(CMAKE_C_SIMULATE_ID "${_gd_rtc_simulate_id}")
 
 setup_geode_mod(${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME} LibDataChannel::LibDataChannelStatic)
