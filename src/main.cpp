@@ -37,6 +37,7 @@ namespace {
     std::map<std::string, CCNode*> g_remoteAvatars;
     std::map<std::string, CCNode*> g_remoteSecondaryAvatars;
     std::map<std::string, CCLabelBMFont*> g_remoteNameLabels;
+    std::map<std::string, SimplePlayer*> g_remoteProgressIcons;
     std::map<std::string, std::pair<CCPoint, float>> g_remoteAvatarTargets;
     std::map<std::string, std::pair<CCPoint, float>> g_remoteSecondaryTargets;
     std::map<std::string, double> g_remoteAvatarLastSeen;
