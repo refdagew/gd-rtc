@@ -1,5 +1,8 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
+#include <Geode/binding/PlayLayer.hpp>
+#include <Geode/binding/LevelEditorLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
@@ -20,8 +23,24 @@ namespace {
     bool g_roomOperationPending = false;
 
     double nowSeconds() {
-        return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
-            std::chrono::system_clock::now().time_since_epoch()).count());
+        return std::chrono::duration<double>(
+            std::chrono::system_clock::now().time_since_epoch()).count();
+    }
+
+    void cacheSharedLevel(std::string const& name, std::string const& data) {
+        if (data.empty() || data.size() > 950000) return;
+        Mod::get()->setSavedValue<std::string>("saved-level-name", name);
+        Mod::get()->setSavedValue<std::string>("saved-level-data", data);
+    }
+
+    void openLevelEditor(std::string const& name, std::string const& data) {
+        if (data.empty()) return;
+        auto level = GJGameLevel::create();
+        level->m_levelName = name.c_str();
+        level->m_levelString = data.c_str();
+        level->m_levelID = 0;
+        auto scene = LevelEditorLayer::scene(level, false);
+        if (scene) CCDirector::sharedDirector()->pushScene(scene);
     }
 
     std::string makeRoomCode() {
@@ -500,6 +519,102 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                                 [](geode::utils::web::WebResponse) {});
                         }
                     });
+            });
+    }
+};
+
+
+class $modify(GDRTCPauseLayer, PauseLayer) {
+    void customSetup() {
+        PauseLayer::customSetup();
+        auto win = CCDirector::sharedDirector()->getWinSize();
+        auto menu = CCMenu::create();
+        menu->setID("gd-rtc-pause-menu");
+        menu->setPosition({win.width - 74.f, 58.f});
+        menu->setScale(std::min(1.0f, std::max(0.65f, win.width / 800.f)));
+        this->addChild(menu, 1000);
+
+        auto share = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Share Level", 108, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .58f),
+            this, menu_selector(GDRTCPauseLayer::onShareCurrentLevel));
+        share->setPosition({0.f, 18.f});
+        menu->addChild(share);
+
+        auto open = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Open Shared", 108, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
+            this, menu_selector(GDRTCPauseLayer::onOpenSharedLevel));
+        open->setPosition({0.f, -20.f});
+        menu->addChild(open);
+    }
+
+    void onShareCurrentLevel(CCObject*) {
+        auto play = PlayLayer::get();
+        if (g_activeRoomCode.empty() || !play || !play->m_level) {
+            FLAlertLayer::create("GD-RTC", "Join a room and start a level before sharing it.", "OK")->show();
+            return;
+        }
+        std::string name = play->m_level->m_levelName.c_str();
+        std::string data = play->m_level->m_levelString.c_str();
+        if (data.empty()) {
+            FLAlertLayer::create("GD-RTC", "This level's data is not available to share.", "OK")->show();
+            return;
+        }
+        auto code = g_activeRoomCode;
+        matjson::Value shared = matjson::Value::object();
+        shared["name"] = name;
+        shared["levelData"] = data;
+        shared["levelID"] = play->m_level->m_levelID;
+        shared["updatedAt"] = nowSeconds();
+        shared["sharedBy"] = playerName();
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(15))
+            .bodyJSON(shared)
+            .put(roomUrl(code, "/sharedLevel")),
+            [name, data](geode::utils::web::WebResponse response) {
+                if (!response.ok()) {
+                    FLAlertLayer::create("GD-RTC", "Couldn't share this level right now. Please try again.", "OK")->show();
+                    return;
+                }
+                cacheSharedLevel(name, data);
+                Notification::create("Level shared with room", NotificationIcon::Success)->show();
+            });
+    }
+
+    void onOpenSharedLevel(CCObject*) {
+        auto code = g_activeRoomCode;
+        if (code.empty()) {
+            auto name = Mod::get()->getSavedValue<std::string>("saved-level-name", "");
+            auto data = Mod::get()->getSavedValue<std::string>("saved-level-data", "");
+            if (data.empty()) {
+                FLAlertLayer::create("GD-RTC", "Join a room to receive a shared level first.", "OK")->show();
+                return;
+            }
+            openLevelEditor(name.empty() ? "Shared level" : name, data);
+            return;
+        }
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(12))
+            .get(roomUrl(code, "/sharedLevel")),
+            [](geode::utils::web::WebResponse response) {
+                if (!response.ok()) {
+                    FLAlertLayer::create("GD-RTC", "Couldn't load the shared level right now.", "OK")->show();
+                    return;
+                }
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) {
+                    FLAlertLayer::create("GD-RTC", "No level has been shared to this room yet.", "OK")->show();
+                    return;
+                }
+                auto nameValue = parsed.unwrap()["name"].asString();
+                auto dataValue = parsed.unwrap()["levelData"].asString();
+                if (!dataValue || dataValue.unwrap().empty()) {
+                    FLAlertLayer::create("GD-RTC", "The shared level data is incomplete.", "OK")->show();
+                    return;
+                }
+                std::string name = nameValue ? nameValue.unwrap() : "Shared level";
+                std::string data = dataValue.unwrap();
+                cacheSharedLevel(name, data);
+                openLevelEditor(name, data);
             });
     }
 };
