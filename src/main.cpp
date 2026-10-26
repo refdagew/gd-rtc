@@ -17,6 +17,7 @@ namespace {
     std::string g_activeRoomCode;
     std::string g_activePeerId;
     bool g_refreshPending = false;
+    bool g_roomOperationPending = false;
 
     double nowSeconds() {
         return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -81,10 +82,13 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     void updateRoomControls(bool inRoom) {
         auto panel = this->getChildByID("gd-rtc-room-panel");
         if (!panel) return;
-        if (auto item = panel->getChildByID("gd-rtc-create")) item->setVisible(!inRoom);
-        if (auto item = panel->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
-        if (auto item = panel->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
-        if (auto item = panel->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
+        auto menu = panel->getChildByID("gd-rtc-room-panel-menu");
+        if (menu) {
+            if (auto item = menu->getChildByID("gd-rtc-create")) item->setVisible(!inRoom);
+            if (auto item = menu->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
+            if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
+            if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
+        }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
             input->setEnabled(!inRoom);
             if (inRoom) input->setString(g_activeRoomCode);
@@ -245,7 +249,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     }
 
     void onCreateRoom(CCObject*) {
-        if (!this->getChildByID("gd-rtc-room-panel")) return;
+        if (!this->getChildByID("gd-rtc-room-panel") || g_roomOperationPending) return;
+        g_roomOperationPending = true;
         setRoomStatus("Creating room...");
         // Best-effort garbage collection for rooms abandoned for more than a day.
         // Use a generous TTL so a long-running level is not mistaken for a dead room.
@@ -292,6 +297,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .bodyJSON(room)
             .put(roomUrl(code)),
             [self, code, peer](geode::utils::web::WebResponse response) {
+                g_roomOperationPending = false;
                 if (!response.ok()) {
                     self->setRoomStatus(responseError(response));
                     return;
@@ -309,7 +315,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
     void onJoinRoom(CCObject*) {
         auto panel = this->getChildByID("gd-rtc-room-panel");
-        if (!panel) return;
+        if (!panel || g_roomOperationPending) return;
         auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"));
         if (!input) return;
         auto rawCode = input->getString();
@@ -320,6 +326,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             return;
         }
 
+        g_roomOperationPending = true;
         setRoomStatus("Joining room...");
         auto peer = makePeerId();
         auto now = nowSeconds();
@@ -329,11 +336,13 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .get(roomUrl(code)),
             [self, code, peer, now](geode::utils::web::WebResponse roomResponse) {
                 if (!roomResponse.ok()) {
+                    g_roomOperationPending = false;
                     self->setRoomStatus(responseError(roomResponse));
                     return;
                 }
                 auto parsed = roomResponse.json();
                 if (!parsed || parsed.unwrap().isNull()) {
+                    g_roomOperationPending = false;
                     self->setRoomStatus("Room not found. Check the code and try again.");
                     return;
                 }
@@ -343,6 +352,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 unsigned int count = 0;
                 for (auto const& [id, value] : members) { (void)id; (void)value; ++count; }
                 if (count >= 8) {
+                    g_roomOperationPending = false;
                     self->setRoomStatus("That room is full (8 players max).");
                     return;
                 }
@@ -358,6 +368,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     .bodyJSON(member)
                     .put(roomUrl(code, "/members/" + peer)),
                     [self, code, peer](geode::utils::web::WebResponse memberResponse) {
+                        g_roomOperationPending = false;
                         if (!memberResponse.ok()) {
                             self->setRoomStatus(responseError(memberResponse));
                             return;
@@ -423,12 +434,22 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 auto members = data["members"];
                 std::string names = "Players in room:";
                 unsigned int count = 0;
+                auto now = nowSeconds();
                 for (auto const& [id, value] : members) {
-                    (void)id;
                     if (count >= 8) break;
+                    auto lastSeenValue = value["lastSeen"].asDouble();
+                    double lastSeen = lastSeenValue ? lastSeenValue.unwrap() : 0.0;
+                    if (lastSeen > 0.0 && now - lastSeen > 45.0) {
+                        // Prune stale presence so crashed/disconnected clients don't stay in the room list.
+                        async::spawn(geode::utils::web::WebRequest()
+                            .timeout(std::chrono::seconds(6))
+                            .send("DELETE", roomUrl(code, "/members/" + id)),
+                            [](geode::utils::web::WebResponse) {});
+                        continue;
+                    }
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
-                    if (name.size() > 32) name.resize(32);
+                    if (name.size() > 24) name.resize(24);
                     names += "\n• " + name;
                     ++count;
                 }
