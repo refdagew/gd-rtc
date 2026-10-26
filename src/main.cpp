@@ -396,8 +396,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (inRoom) codeLabel->setString(("Room " + g_activeRoomCode).c_str());
         }
         if (menu) {
-            if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({-72.f, 0.f});
-            if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({72.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-create")) item->setPosition({0.f, 0.f});
+            if (auto item = menu->getChildByID("gd-rtc-join")) item->setPosition({-76.f, -40.f});
             if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(false);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setPosition({0.f, -164.f});
             if (auto item = menu->getChildByID("gd-rtc-close")) item->setVisible(true);
