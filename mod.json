@@ -8,9 +8,9 @@
   },
   "id": "gd-rtc",
   "name": "GD-RTC",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "developer": "GD-RTC contributors",
-  "description": "GD-RTC room creation and joining via Firebase Realtime Database. Gameplay multiplayer is not implemented yet.",
+  "description": "Experimental peer-to-peer multiplayer using WebRTC data channels, with Firebase Realtime Database used for room metadata and connection signaling.",
   "repository": "https://github.com/refdagew/gd-rtc",
   "tags": [
     "online",
