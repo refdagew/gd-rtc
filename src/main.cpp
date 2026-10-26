@@ -455,7 +455,8 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         menu->addChild(closeBtn);
 
         updateRoomControls(!g_activeRoomCode.empty());
-        this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 10.0f);
+        this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 15.0f);
+        this->schedule(schedule_selector(GDRTCMenuLayer::pollSignaling), 1.0f);
         if (!g_activeRoomCode.empty()) {
             input->setString(g_activeRoomCode);
             setRoomStatus("Room " + g_activeRoomCode);
@@ -465,6 +466,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
     void onCloseRooms(CCObject*) {
         this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
+        this->unschedule(schedule_selector(GDRTCMenuLayer::pollSignaling));
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) panel->removeFromParent();
         setBackgroundMenusEnabled(true);
     }
@@ -582,6 +584,12 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             });
     }
 
+    void pollSignaling(float) {
+        // Signaling requests stop automatically for connected peers.
+        // Gameplay packets never pass through Firebase.
+        if (!g_activeRoomCode.empty()) rtcPollSignals();
+    }
+
     void pollRoom(float) {
         if (!this->getChildByID("gd-rtc-room-panel")) {
             this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
@@ -591,8 +599,11 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             onRefreshMembers(nullptr);
             auto code = g_activeRoomCode;
             auto peer = g_activePeerId;
+            static double lastHeartbeatAt = 0.0;
             auto now = nowSeconds();
-            async::spawn(geode::utils::web::WebRequest()
+            if (now - lastHeartbeatAt >= 30.0) {
+                lastHeartbeatAt = now;
+                async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(6))
                 .bodyJSON(now)
                 .put(roomUrl(code, "/lastSeen")),
@@ -602,6 +613,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 .bodyJSON(now)
                 .put(roomUrl(code, "/members/" + peer + "/lastSeen")),
                 [](geode::utils::web::WebResponse) {});
+            }
         }
     }
 
@@ -650,7 +662,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     auto level = state["name"].asString();
                     auto updated = state["updatedAt"].asDouble();
                     std::string row = name;
-                    if (level && updated && nowSeconds() - updated.unwrap() < 3.0) {
+                    if (level && updated && nowSeconds() - updated.unwrap() < 86400.0) {
                         std::string levelName = level.unwrap();
                         if (levelName.size() > 14) levelName.resize(14);
                         row += " — " + levelName;
