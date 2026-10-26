@@ -42,11 +42,16 @@ set(MBEDTLS_FATAL_WARNINGS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
     mbedtls
     GIT_REPOSITORY https://github.com/Mbed-TLS/mbedtls.git
-    GIT_TAG v3.6.2
+    GIT_TAG v4.2.0
     GIT_SHALLOW TRUE
     GIT_SUBMODULES_RECURSE TRUE
 )
+# The Geode Windows toolchain reports an MSVC simulation ID while using
+# clang, so let Mbed TLS select its actual Clang compile flags.
+set(_gd_rtc_simulate_id "${CMAKE_C_SIMULATE_ID}")
+set(CMAKE_C_SIMULATE_ID "")
 FetchContent_MakeAvailable(mbedtls)
+set(CMAKE_C_SIMULATE_ID "${_gd_rtc_simulate_id}")
 if(TARGET mbedtls AND NOT TARGET MbedTLS::MbedTLS)
     add_library(MbedTLS::MbedTLS ALIAS mbedtls)
 endif()
@@ -54,7 +59,7 @@ endif()
 FetchContent_Declare(
     libdatachannel
     GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
-    GIT_TAG v0.23.2
+    GIT_TAG v0.24.5
     GIT_SHALLOW TRUE
     GIT_SUBMODULES_RECURSE TRUE
 )
