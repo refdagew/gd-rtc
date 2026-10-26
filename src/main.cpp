@@ -185,7 +185,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         closeBtn->setPosition({0, -82});
         menu->addChild(closeBtn);
 
-        this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 5.0f);
+        this->schedule(schedule_selector(GDRTCMenuLayer::pollRoom), 10.0f);
         if (!g_activeRoomCode.empty()) {
             input->setString(g_activeRoomCode);
             setRoomStatus("Room " + g_activeRoomCode);
@@ -307,7 +307,22 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
             return;
         }
-        if (!g_activeRoomCode.empty()) onRefreshMembers(nullptr);
+        if (!g_activeRoomCode.empty()) {
+            onRefreshMembers(nullptr);
+            auto code = g_activeRoomCode;
+            auto peer = g_activePeerId;
+            auto now = nowSeconds();
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .bodyJSON(now)
+                .put(roomUrl(code, "/lastSeen")),
+                [](geode::utils::web::WebResponse) {});
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .bodyJSON(now)
+                .put(roomUrl(code, "/members/" + peer + "/lastSeen")),
+                [](geode::utils::web::WebResponse) {});
+        }
     }
 
     void onRefreshMembers(CCObject*) {
@@ -377,6 +392,29 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 }
                 self->setRoomMembers("Players in room:\n—");
                 self->setRoomStatus("You left the room.");
+
+                // Remove the room record once its last member has left.
+                async::spawn(geode::utils::web::WebRequest()
+                    .timeout(std::chrono::seconds(8))
+                    .get(roomUrl(code)),
+                    [code](geode::utils::web::WebResponse roomResponse) {
+                        if (!roomResponse.ok()) return;
+                        auto parsed = roomResponse.json();
+                        if (!parsed || parsed.unwrap().isNull()) return;
+                        auto members = parsed.unwrap()["members"];
+                        bool anyMembers = false;
+                        for (auto const& [id, value] : members) {
+                            (void)id; (void)value;
+                            anyMembers = true;
+                            break;
+                        }
+                        if (!anyMembers) {
+                            async::spawn(geode::utils::web::WebRequest()
+                                .timeout(std::chrono::seconds(8))
+                                .send("DELETE", roomUrl(code)),
+                                [](geode::utils::web::WebResponse) {});
+                        }
+                    });
             });
     }
 };
