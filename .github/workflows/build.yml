@@ -1,11 +1,9 @@
 name: Build GD-RTC
 
 on:
-  # Push builds are temporarily enabled to validate the WebRTC implementation.
-  # Return to manual-only builds once this integration passes.
+  # Builds are manual while multiplayer functionality is under active development.
+  # This avoids spending CI minutes on every intermediate commit.
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
