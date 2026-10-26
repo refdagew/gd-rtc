@@ -11,6 +11,12 @@ endif()
 
 project(gd-rtc VERSION 0.1.0)
 
+# Windows SDK headers otherwise define min/max macros that break std::min/max
+# in libdatachannel when built with the Geode clang toolchain.
+if(WIN32)
+    add_compile_definitions(NOMINMAX)
+endif()
+
 file(GLOB_RECURSE SOURCES CONFIGURE_DEPENDS src/*.cpp)
 add_library(${PROJECT_NAME} SHARED ${SOURCES})
 
