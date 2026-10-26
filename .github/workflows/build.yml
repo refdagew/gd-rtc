@@ -40,6 +40,7 @@ jobs:
           sdk: v5.11.2
           target: ${{ matrix.platform.target }}
           use-lto: false
+          configure-args: ${{ matrix.platform.target == 'iOS' && '-DCMAKE_CXX_FLAGS=-include\ Geode/fmod/fmod.hpp' || '' }}
 
       - name: Upload .geode package
         if: success()
