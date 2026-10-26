@@ -38,9 +38,6 @@ jobs:
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: v5.11.2
-          # Use the PR's fork: this commit is not part of geode-sdk/bindings main.
-          bindings: vwtfafa/bindings
-          bindings-ref: c0c808828d456e54164b60a589b0edd6172b327a
           target: ${{ matrix.platform.target }}
           use-lto: false
 
