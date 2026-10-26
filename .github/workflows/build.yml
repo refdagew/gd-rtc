@@ -38,6 +38,9 @@ jobs:
         uses: geode-sdk/build-geode-mod@main
         with:
           sdk: v5.11.2
+          # PR #1390 fixes iOS FMOD headers. Keep other targets on official bindings.
+          bindings: ${{ matrix.platform.target == 'iOS' && 'vwtfafa/bindings' || 'geode-sdk/bindings' }}
+          bindings-ref: ${{ matrix.platform.target == 'iOS' && 'c0c808828d456e54164b60a589b0edd6172b327a' || '' }}
           target: ${{ matrix.platform.target }}
           use-lto: false
 
