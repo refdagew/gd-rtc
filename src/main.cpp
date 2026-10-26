@@ -3,22 +3,7 @@
 
 using namespace geode::prelude;
 
-namespace {
-    class GDRTCInfoPopup : public FLAlertLayer {
-    public:
-        void showInfo() {
-            FLAlertLayer::create(
-                "GD-RTC",
-                "The multiplayer foundation is being built.\n\n"
-                "This early build adds the GD-RTC entry point. "
-                "Room signaling and WebRTC gameplay sync are not implemented yet.",
-                "OK"
-            )->show();
-        }
-    };
-}
-
-$modify(GDRTCMenuLayer, MenuLayer) {
+class $modify(GDRTCMenuLayer, MenuLayer) {
     bool init() {
         if (!MenuLayer::init()) {
             return false;
@@ -54,7 +39,7 @@ $modify(GDRTCMenuLayer, MenuLayer) {
             return true;
         }
 
-        button->setID("gd-rtc-main-menu-button");
+        button->setID("gd-rtc-main-menu-button"_spr);
         mainMenu->addChild(button);
         if (auto menu = typeinfo_cast<CCMenu*>(mainMenu)) {
             menu->updateLayout();
