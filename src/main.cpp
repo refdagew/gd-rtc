@@ -4,6 +4,7 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/binding/PlayLayer.hpp>
 #include <Geode/binding/LevelEditorLayer.hpp>
+#include <Geode/binding/SimplePlayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
@@ -679,6 +680,10 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             state["rotation2"] = p2 ? p2->getRotation() : 0.f;
             state["dual"] = p2 != nullptr;
             state["percent"] = this->getCurrentPercent();
+            state["icon"] = GameManager::sharedState()->getPlayerFrame();
+            state["color1"] = GameManager::sharedState()->getPlayerColor();
+            state["color2"] = GameManager::sharedState()->getPlayerColor2();
+            state["glow"] = GameManager::sharedState()->m_playerGlow;
             state["updatedAt"] = now;
             async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(5))
@@ -712,6 +717,11 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                         auto xValue = state["x"].asDouble();
                         auto yValue = state["y"].asDouble();
                         auto rotationValue = state["rotation"].asDouble();
+                        auto iconValue = state["icon"].asInt();
+                        auto color1Value = state["color1"].asInt();
+                        auto color2Value = state["color2"].asInt();
+                        auto glowValue = state["glow"].asBool();
+                        auto percentValue = state["percent"].asDouble();
                         if (!updatedValue || !levelIdValue || !levelNameValue || !xValue || !yValue || !rotationValue) continue;
                         if (nowSeconds() - updatedValue.unwrap() > 3.0) continue;
                         if (levelIdValue.unwrap() != local->m_levelID ||
@@ -720,8 +730,10 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                         auto found = g_remoteAvatars.find(id);
                         CCNode* avatar = found == g_remoteAvatars.end() ? nullptr : found->second;
                         if (!avatar) {
-                            avatar = CCSprite::createWithSpriteFrameName("player_01_001.png");
+                            avatar = SimplePlayer::create(iconValue ? iconValue.unwrap() : 1);
+                            if (!avatar) avatar = CCSprite::createWithSpriteFrameName("player_01_001.png");
                             if (!avatar) avatar = CCLayerColor::create({90, 210, 255, 255}, 18.f, 18.f);
+                            avatar->setScale(0.68f);
                             avatar->setID(("gd-rtc-remote-" + id).c_str());
                             auto label = CCLabelBMFont::create("", "goldFont.fnt");
                             label->setID("gd-rtc-remote-name");
@@ -741,8 +753,17 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                         if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
                             auto nameValue = member["name"].asString();
                             std::string name = nameValue ? nameValue.unwrap() : "Player";
-                            if (name.size() > 20) name.resize(20);
+                            if (name.size() > 16) name.resize(16);
+                            if (percentValue) name += " " + std::to_string(static_cast<int>(percentValue.unwrap())) + "%";
                             label->setString(name.c_str());
+                        }
+                        if (auto simple = typeinfo_cast<SimplePlayer*>(avatar)) {
+                            auto gm = GameManager::sharedState();
+                            if (color1Value) simple->setColor(gm->colorForIdx(static_cast<int>(color1Value.unwrap())));
+                            if (color2Value) simple->setSecondColor(gm->colorForIdx(static_cast<int>(color2Value.unwrap())));
+                            if (glowValue && glowValue.unwrap() && color2Value) {
+                                simple->setGlowOutline(gm->colorForIdx(static_cast<int>(color2Value.unwrap())));
+                            }
                         }
                         auto dualValue = state["dual"].asBool();
                         auto x2Value = state["x2"].asDouble();
