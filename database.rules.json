@@ -1,0 +1,61 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "rooms": {
+      "$roomCode": {
+        ".read": true,
+        ".write": true,
+        ".validate": "newData.hasChildren(['code', 'createdAt', 'lastSeen', 'protocol', 'members']) && newData.child('code').val() === $roomCode",
+        "code": {
+          ".validate": "newData.isString() && newData.val().matches(/^[A-HJ-NP-Z2-9]{6}$/)"
+        },
+        "createdAt": {
+          ".validate": "newData.isNumber()"
+        },
+        "lastSeen": {
+          ".validate": "newData.isNumber()"
+        },
+        "protocol": {
+          ".validate": "newData.isNumber() && newData.val() === 1"
+        },
+        "members": {
+          "$peerId": {
+            ".validate": "newData.hasChildren(['name', 'peerId', 'joinedAt'])",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 32"
+            },
+            "peerId": {
+              ".validate": "newData.isString() && newData.val() === $peerId"
+            },
+            "joinedAt": {
+              ".validate": "newData.isNumber()"
+            },
+            "lastSeen": {
+              ".validate": "newData.isNumber()"
+            }
+          }
+        },
+        "states": {
+          "$peerId": {
+            ".validate": "newData.hasChildren(['x', 'y', 'rotation', 'progress', 'updatedAt'])",
+            "x": { ".validate": "newData.isNumber()" },
+            "y": { ".validate": "newData.isNumber()" },
+            "rotation": { ".validate": "newData.isNumber()" },
+            "progress": { ".validate": "newData.isNumber() && newData.val() >= 0 && newData.val() <= 100" },
+            "updatedAt": { ".validate": "newData.isNumber()" }
+          }
+        },
+        "levels": {
+          "$levelKey": {
+            ".validate": "newData.hasChildren(['name', 'levelData', 'owner', 'updatedAt'])",
+            "name": { ".validate": "newData.isString() && newData.val().length <= 100" },
+            "levelData": { ".validate": "newData.isString() && newData.val().length <= 1000000" },
+            "owner": { ".validate": "newData.isString() && newData.val().length <= 32" },
+            "updatedAt": { ".validate": "newData.isNumber()" }
+          }
+        }
+      }
+    }
+  }
+}
