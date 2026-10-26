@@ -10,6 +10,7 @@
 #include <random>
 #include <string>
 #include <vector>
+#include <map>
 
 using namespace geode::prelude;
 
@@ -21,6 +22,9 @@ namespace {
     bool g_refreshPending = false;
     bool g_roomOperationPending = false;
     std::vector<std::pair<std::string, std::string>> g_savedLevelsCache;
+    bool g_stateSendPending = false;
+    bool g_statePollPending = false;
+    std::map<std::string, CCNode*> g_remoteAvatars;
 
     double nowSeconds() {
         return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
@@ -717,5 +721,136 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
 
     void onShareLevel(CCObject*) {
         shareCurrentLevel();
+    }
+};
+
+
+class $modify(GDRTCPlayLayer, PlayLayer) {
+    void postUpdate(float dt) {
+        PlayLayer::postUpdate(dt);
+
+        if (g_activeRoomCode.empty() || g_activePeerId.empty() || !this->m_player1 || !this->m_level) {
+            for (auto const& [peer, node] : g_remoteAvatars) {
+                (void)peer;
+                if (node && node->getParent()) node->removeFromParent();
+            }
+            g_remoteAvatars.clear();
+            return;
+        }
+
+        static PlayLayer* lastLayer = nullptr;
+        static double lastSendAt = 0.0;
+        static double lastPollAt = 0.0;
+        if (lastLayer != this) {
+            g_remoteAvatars.clear();
+            lastLayer = this;
+            lastSendAt = 0.0;
+            lastPollAt = 0.0;
+        }
+
+        auto now = nowSeconds();
+        auto code = g_activeRoomCode;
+        auto peer = g_activePeerId;
+        auto player = this->m_player1;
+        auto levelName = std::string(this->m_level->m_levelName.c_str());
+        auto levelID = static_cast<int>(this->m_level->m_levelID);
+        auto position = player->getPosition();
+        auto rotation = player->getRotation();
+        auto percent = this->getCurrentPercent();
+
+        // RTDB is the relay in this no-STUN/no-TURN build. State is sampled at
+        // 10 Hz; the remote overlay is refreshed at about 4 Hz to keep traffic bounded.
+        if (now - lastSendAt >= 0.10 && !g_stateSendPending) {
+            lastSendAt = now;
+            g_stateSendPending = true;
+            matjson::Value state = matjson::Value::object();
+            state["peerId"] = peer;
+            state["name"] = playerName();
+            state["x"] = position.x;
+            state["y"] = position.y;
+            state["rotation"] = rotation;
+            state["percent"] = percent;
+            state["levelId"] = levelID;
+            state["levelName"] = levelName;
+            state["updatedAt"] = now;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(5))
+                .bodyJSON(state)
+                .put(roomUrl(code, "/states/" + peer)),
+                [code](geode::utils::web::WebResponse) {
+                    if (g_activeRoomCode == code) g_stateSendPending = false;
+                });
+        }
+
+        if (now - lastPollAt >= 0.25 && !g_statePollPending) {
+            lastPollAt = now;
+            g_statePollPending = true;
+            Ref<GDRTCPlayLayer> self = this;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .get(roomUrl(code, "/states")),
+                [self, code, peer, levelID, levelName](geode::utils::web::WebResponse response) {
+                    if (g_activeRoomCode == code) g_statePollPending = false;
+                    if (g_activeRoomCode != code || g_activePeerId != peer || PlayLayer::get() != self) return;
+                    if (!response.ok()) return;
+                    auto parsed = response.json();
+                    if (!parsed || parsed.unwrap().isNull()) return;
+                    auto states = parsed.unwrap();
+                    auto now = nowSeconds();
+                    std::vector<std::string> seen;
+
+                    for (auto const& [remotePeer, state] : states) {
+                        if (remotePeer == peer) continue;
+                        auto updated = state["updatedAt"].asDouble();
+                        auto x = state["x"].asDouble();
+                        auto y = state["y"].asDouble();
+                        auto angle = state["rotation"].asDouble();
+                        auto pct = state["percent"].asDouble();
+                        auto remoteLevelId = state["levelId"].asInt();
+                        auto remoteLevelName = state["levelName"].asString();
+                        auto remoteName = state["name"].asString();
+                        if (!updated || !x || !y || !remoteLevelId || !remoteLevelName) continue;
+                        if (now - updated.unwrap() > 5.0 || now < updated.unwrap() - 10.0) continue;
+                        if (remoteLevelId.unwrap() != levelID || remoteLevelName.unwrap() != levelName) continue;
+
+                        auto it = g_remoteAvatars.find(remotePeer);
+                        CCNode* avatar = nullptr;
+                        if (it == g_remoteAvatars.end() || !it->second || !it->second->getParent()) {
+                            avatar = CCNode::create();
+                            auto marker = CCLayerColor::create({80, 220, 255, 220}, 18.f, 18.f);
+                            marker->setPosition({-9.f, -9.f});
+                            avatar->addChild(marker, 0);
+                            auto label = CCLabelBMFont::create("Player", "goldFont.fnt");
+                            label->setID("gd-rtc-remote-name");
+                            label->setAnchorPoint({0.5f, 0.f});
+                            label->setPosition({0.f, 14.f});
+                            label->setScale(0.42f);
+                            avatar->addChild(label, 1);
+                            self->addChild(avatar, 999);
+                            g_remoteAvatars[remotePeer] = avatar;
+                        } else {
+                            avatar = it->second;
+                        }
+                        if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
+                            std::string displayName = remoteName ? remoteName.unwrap() : "Player";
+                            if (pct) displayName += " " + std::to_string(static_cast<int>(pct.unwrap())) + "%";
+                            if (displayName.size() > 34) displayName.resize(34);
+                            label->setString(displayName.c_str());
+                        }
+                        avatar->setPosition({static_cast<float>(x.unwrap()), static_cast<float>(y.unwrap())});
+                        if (angle) avatar->setRotation(static_cast<float>(angle.unwrap()));
+                        seen.push_back(remotePeer);
+                    }
+
+                    for (auto it = g_remoteAvatars.begin(); it != g_remoteAvatars.end();) {
+                        if (std::find(seen.begin(), seen.end(), it->first) == seen.end()) {
+                            if (it->second && it->second->getParent()) it->second->removeFromParent();
+                            it = g_remoteAvatars.erase(it);
+                        } else {
+                            ++it;
+                        }
+                    }
+                });
+        }
     }
 };
