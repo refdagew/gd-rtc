@@ -8,12 +8,18 @@
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
+#include <rtc/rtc.hpp>
 #include <chrono>
 #include <algorithm>
+#include <atomic>
 #include <cctype>
+#include <deque>
 #include <random>
+#include <set>
 #include <map>
+#include <mutex>
 #include <string>
+#include <sstream>
 #include <vector>
 
 using namespace geode::prelude;
@@ -25,6 +31,142 @@ namespace {
     std::string g_activePeerId;
     bool g_refreshPending = false;
     bool g_roomOperationPending = false;
+    std::map<std::string, std::string> g_peerNames;
+    std::map<std::string, CCNode*> g_remoteAvatars;
+    struct GDRTCPeerSession {
+        std::shared_ptr<rtc::PeerConnection> pc;
+        std::shared_ptr<rtc::DataChannel> channel;
+        bool offerer = false;
+        std::atomic_bool remoteDescriptionSet{false};
+        std::atomic_bool signalPollPending{false};
+        std::set<std::string> seenCandidates;
+        std::mutex candidateMutex;
+    };
+    std::map<std::string, std::shared_ptr<GDRTCPeerSession>> g_rtcPeers;
+    std::mutex g_rtcMessagesMutex;
+    std::deque<std::pair<std::string, std::string>> g_rtcMessages;
+
+    void rtcEnsurePeer(std::string const& remoteId) {
+        if (g_activeRoomCode.empty() || g_activePeerId.empty() || remoteId.empty() ||
+            remoteId == g_activePeerId || g_rtcPeers.count(remoteId)) return;
+        auto room = g_activeRoomCode;
+        auto self = g_activePeerId;
+        auto session = std::make_shared<GDRTCPeerSession>();
+        session->offerer = self < remoteId;
+        rtc::Configuration config; // Deliberately no STUN or TURN servers.
+        try {
+            session->pc = std::make_shared<rtc::PeerConnection>(config);
+            session->pc->onLocalDescription([room, self, remoteId, session](rtc::Description description) {
+                if (g_activeRoomCode != room || g_activePeerId != self) return;
+                matjson::Value body = matjson::Value::object();
+                body["type"] = std::string(description.typeString());
+                body["sdp"] = std::string(description);
+                auto type = std::string(description.typeString());
+                async::spawn(geode::utils::web::WebRequest()
+                    .timeout(std::chrono::seconds(8))
+                    .bodyJSON(body)
+                    .put(roomUrl(room, "/members/" + self + "/signals/" + remoteId + "/" + type)),
+                    [](geode::utils::web::WebResponse) {});
+            });
+            session->pc->onLocalCandidate([room, self, remoteId](rtc::Candidate candidate) {
+                if (g_activeRoomCode != room || g_activePeerId != self) return;
+                matjson::Value body = matjson::Value::object();
+                body["candidate"] = std::string(candidate.candidate());
+                body["mid"] = std::string(candidate.mid());
+                async::spawn(geode::utils::web::WebRequest()
+                    .timeout(std::chrono::seconds(8))
+                    .bodyJSON(body)
+                    .post(roomUrl(room, "/members/" + self + "/signals/" + remoteId + "/candidates")),
+                    [](geode::utils::web::WebResponse) {});
+            });
+            session->pc->onDataChannel([remoteId, session](std::shared_ptr<rtc::DataChannel> channel) {
+                session->channel = channel;
+                channel->onMessage([remoteId](rtc::message_variant message) {
+                    if (!std::holds_alternative<rtc::string>(message)) return;
+                    std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
+                    if (g_rtcMessages.size() > 128) g_rtcMessages.pop_front();
+                    g_rtcMessages.emplace_back(remoteId, std::get<rtc::string>(std::move(message)));
+                });
+            });
+            session->pc->onStateChange([remoteId](rtc::PeerConnection::State state) {
+                if (state == rtc::PeerConnection::State::Failed ||
+                    state == rtc::PeerConnection::State::Closed) {
+                    log::warn("GD-RTC WebRTC peer {} disconnected", remoteId);
+                }
+            });
+            g_rtcPeers[remoteId] = session;
+            if (session->offerer) {
+                session->channel = session->pc->createDataChannel("gd-rtc-gameplay");
+                session->channel->onMessage([remoteId](rtc::message_variant message) {
+                    if (!std::holds_alternative<rtc::string>(message)) return;
+                    std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
+                    if (g_rtcMessages.size() > 128) g_rtcMessages.pop_front();
+                    g_rtcMessages.emplace_back(remoteId, std::get<rtc::string>(std::move(message)));
+                });
+                session->pc->setLocalDescription(rtc::Description::Type::Offer);
+            }
+        } catch (std::exception const& e) {
+            log::error("GD-RTC WebRTC setup failed: {}", e.what());
+            g_rtcPeers.erase(remoteId);
+        }
+    }
+
+    void rtcPollSignals() {
+        if (g_activeRoomCode.empty() || g_activePeerId.empty()) return;
+        auto room = g_activeRoomCode;
+        auto self = g_activePeerId;
+        for (auto const& [remoteId, session] : g_rtcPeers) {
+            if (session->signalPollPending.exchange(true)) continue;
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(6))
+                .get(roomUrl(room, "/members/" + remoteId + "/signals/" + self)),
+                [room, self, remoteId, session](geode::utils::web::WebResponse response) {
+                    session->signalPollPending = false;
+                    if (g_activeRoomCode != room || g_activePeerId != self || !response.ok()) return;
+                    auto parsed = response.json();
+                    if (!parsed || parsed.unwrap().isNull()) return;
+                    auto signal = parsed.unwrap();
+                    auto offer = signal["offer"];
+                    auto answer = signal["answer"];
+                    try {
+                        if (!session->remoteDescriptionSet && session->offerer == false) {
+                            auto sdp = offer["sdp"].asString();
+                            auto type = offer["type"].asString();
+                            if (sdp && type && !sdp.unwrap().empty()) {
+                                session->pc->setRemoteDescription(rtc::Description(sdp.unwrap(), type.unwrap()));
+                                session->remoteDescriptionSet = true;
+                                session->pc->setLocalDescription(rtc::Description::Type::Answer);
+                            }
+                        } else if (!session->remoteDescriptionSet && session->offerer) {
+                            auto sdp = answer["sdp"].asString();
+                            auto type = answer["type"].asString();
+                            if (sdp && type && !sdp.unwrap().empty()) {
+                                session->pc->setRemoteDescription(rtc::Description(sdp.unwrap(), type.unwrap()));
+                                session->remoteDescriptionSet = true;
+                            }
+                        }
+                        if (session->remoteDescriptionSet) {
+                            auto candidates = signal["candidates"];
+                            for (auto const& [candidateId, value] : candidates) {
+                                {
+                                    std::lock_guard<std::mutex> lock(session->candidateMutex);
+                                    if (session->seenCandidates.count(candidateId)) continue;
+                                    session->seenCandidates.insert(candidateId);
+                                }
+                                auto candidate = value["candidate"].asString();
+                                auto mid = value["mid"].asString();
+                                if (candidate && mid) session->pc->addRemoteCandidate(
+                                    rtc::Candidate(candidate.unwrap(), mid.unwrap()));
+                            }
+                        }
+                    } catch (std::exception const& e) {
+                        log::warn("GD-RTC WebRTC signaling error: {}", e.what());
+                    }
+                });
+        }
+    }
+
+
     std::vector<std::string> g_roomMemberIds;
     std::vector<std::pair<std::string, std::string>> g_savedLevelsCache;
 
