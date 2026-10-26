@@ -40,8 +40,6 @@ jobs:
           sdk: v5.11.2
           target: ${{ matrix.platform.target }}
           use-lto: false
-          bindings: ${{ matrix.platform.target == 'iOS' && 'vwtfafa/bindings' || 'geode-sdk/bindings' }}
-          bindings-ref: ${{ matrix.platform.target == 'iOS' && 'fix/2.2081-depends' || '' }}
 
       - name: Upload .geode package
         if: success()
