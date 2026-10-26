@@ -343,19 +343,20 @@ namespace {
     }
 
     void addGeodePanelBackground(CCNode* panel) {
-        auto bg = CCSprite::createWithSpriteFrameName("GJ_square01.png");
-        if (bg && bg->getContentSize().width > 0.f && bg->getContentSize().height > 0.f) {
-            bg->setScaleX(360.f / bg->getContentSize().width);
-            bg->setScaleY(420.f / bg->getContentSize().height);
-            bg->setPosition({0.f, 0.f});
-            bg->setID("gd-rtc-panel-background");
-            panel->addChild(bg, -1);
-        } else {
-            auto fallback = CCLayerColor::create({105, 69, 43, 248});
-            fallback->setContentSize({360.f, 420.f});
-            fallback->setPosition({-180.f, -210.f});
-            panel->addChild(fallback, -1);
-        }
+        // Do not request GJ_square01.png by name here: on some GD builds it
+        // resolves to Geode's missing-texture checkerboard instead of a frame.
+        // A solid warm-brown panel is preferable to displaying a broken asset.
+        auto background = CCLayerColor::create({105, 69, 43, 248});
+        background->setContentSize({360.f, 420.f});
+        background->setPosition({-180.f, -210.f});
+        background->setID("gd-rtc-panel-background");
+        panel->addChild(background, -1);
+
+        auto header = CCLayerColor::create({126, 84, 52, 255});
+        header->setContentSize({360.f, 78.f});
+        header->setPosition({-180.f, 132.f});
+        header->setID("gd-rtc-panel-header");
+        panel->addChild(header, -1);
     }
 }
 
@@ -1070,10 +1071,23 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
             else if (p1->m_isRobot) iconType = static_cast<int>(IconType::Robot);
             else if (p1->m_isSpider) iconType = static_cast<int>(IconType::Spider);
             else if (p1->m_isSwing) iconType = static_cast<int>(IconType::Swing);
+            // getPlayerFrame() is always the cube selection. Select the
+            // correct icon ID for the player's current gamemode before sending it.
+            int activeIcon = gm->getPlayerFrame();
+            switch (static_cast<IconType>(iconType)) {
+                case IconType::Ship: activeIcon = gm->getPlayerShip(); break;
+                case IconType::Ball: activeIcon = gm->getPlayerBall(); break;
+                case IconType::Ufo: activeIcon = gm->getPlayerBird(); break;
+                case IconType::Wave: activeIcon = gm->getPlayerDart(); break;
+                case IconType::Robot: activeIcon = gm->getPlayerRobot(); break;
+                case IconType::Spider: activeIcon = gm->getPlayerSpider(); break;
+                case IconType::Swing: activeIcon = gm->getPlayerSwing(); break;
+                default: break;
+            }
             packet << "S|" << pos1.x << "|" << pos1.y << "|" << p1->getRotation()
                    << "|" << pos2.x << "|" << pos2.y << "|" << (p2 ? p2->getRotation() : 0.f)
                    << "|" << (p2 ? 1 : 0) << "|" << this->getCurrentPercent()
-                   << "|" << gm->getPlayerFrame() << "|" << iconType << "|" << gm->getPlayerColor()
+                   << "|" << activeIcon << "|" << iconType << "|" << gm->getPlayerColor()
                    << "|" << gm->getPlayerColor2() << "|" << (gm->m_playerGlow ? 1 : 0)
                    << "|" << static_cast<int>(this->m_level->m_levelID) << "|";
             std::string safeLevelName = this->m_level->m_levelName.c_str();
