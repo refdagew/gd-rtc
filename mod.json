@@ -8,9 +8,9 @@
   },
   "id": "gd-rtc",
   "name": "GD-RTC",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "developer": "GD-RTC contributors",
-  "description": "Online multiplayer using WebRTC and Firebase RTDB. Original code inspired by the idea of multiplayer Geometry Dash.",
+  "description": "GD-RTC room creation and joining via Firebase Realtime Database. Gameplay multiplayer is not implemented yet.",
   "repository": "https://github.com/refdagew/gd-rtc",
   "tags": [
     "online",
