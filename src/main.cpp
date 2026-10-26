@@ -41,7 +41,7 @@ namespace {
     }
 
     std::string playerName() {
-        auto name = GameManager::sharedState()->m_playerName;
+        std::string name(GameManager::sharedState()->m_playerName.c_str());
         if (name.empty()) name = "Guest";
         if (name.size() > 32) name.resize(32);
         return name;
