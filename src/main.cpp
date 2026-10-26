@@ -782,7 +782,7 @@ class $modify(GDRTCPauseLayer, PauseLayer) {
         auto win = CCDirector::sharedDirector()->getWinSize();
         auto menu = CCMenu::create();
         menu->setID("gd-rtc-pause-menu");
-        menu->setPosition({win.width - 74.f, 58.f});
+        menu->setPosition({win.width - 74.f, 100.f});
         menu->setScale(std::min(1.0f, std::max(0.65f, win.width / 800.f)));
         this->addChild(menu, 1000);
 
