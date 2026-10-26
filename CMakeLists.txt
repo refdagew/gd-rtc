@@ -21,4 +21,25 @@ else()
 endif()
 
 add_subdirectory($ENV{GEODE_SDK} ${CMAKE_CURRENT_BINARY_DIR}/geode)
+
+# WebRTC data channels carry all high-frequency gameplay packets peer-to-peer.
+# Firebase remains the low-frequency room directory and signaling transport only.
+include(FetchContent)
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(BUILD_SHARED_DEPS_LIBS OFF CACHE BOOL "" FORCE)
+set(NO_MEDIA ON CACHE BOOL "" FORCE)
+set(NO_WEBSOCKET ON CACHE BOOL "" FORCE)
+set(NO_EXAMPLES ON CACHE BOOL "" FORCE)
+set(NO_TESTS ON CACHE BOOL "" FORCE)
+set(WARNINGS_AS_ERRORS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    libdatachannel
+    GIT_REPOSITORY https://github.com/paullouisageneau/libdatachannel.git
+    GIT_TAG v0.23.2
+    GIT_SHALLOW TRUE
+    GIT_SUBMODULES_RECURSE TRUE
+)
+FetchContent_MakeAvailable(libdatachannel)
+
 setup_geode_mod(${PROJECT_NAME})
+target_link_libraries(${PROJECT_NAME} PRIVATE LibDataChannel::LibDataChannel)
