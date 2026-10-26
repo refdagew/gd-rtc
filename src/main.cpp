@@ -95,19 +95,20 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto title = CCLabelBMFont::create("GD-RTC Rooms", "bigFont.fnt");
         title->setScale(0.8f);
         title->setPosition({win.width / 2, win.height / 2 + 95});
-        m_roomPanel->addChild(title);
+        panel->addChild(title);
 
         auto subtitle = CCLabelBMFont::create("Create a room or enter a friend's code", "goldFont.fnt");
         subtitle->setScale(0.42f);
         subtitle->setPosition({win.width / 2, win.height / 2 + 63});
-        m_roomPanel->addChild(subtitle);
+        panel->addChild(subtitle);
 
-        m_roomCodeInput = geode::TextInput::create(190.f, "Room code");
-        m_roomCodeInput->setCommonFilter(geode::CommonFilter::Alphanumeric);
-        m_roomCodeInput->setMaxCharCount(6);
-        m_roomCodeInput->setTextAlign(geode::TextInputAlign::Center);
-        m_roomCodeInput->setPosition({win.width / 2, win.height / 2 + 20});
-        m_roomPanel->addChild(m_roomCodeInput);
+        auto input = geode::TextInput::create(190.f, "Room code");
+        input->setID("gd-rtc-room-code-input");
+        input->setCommonFilter(geode::CommonFilter::Alphanumeric);
+        input->setMaxCharCount(6);
+        input->setTextAlign(geode::TextInputAlign::Center);
+        input->setPosition({win.width / 2, win.height / 2 + 20});
+        panel->addChild(input);
 
         auto menu = CCMenu::create();
         menu->setPosition({win.width / 2, win.height / 2 - 30});
