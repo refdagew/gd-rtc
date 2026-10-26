@@ -42,6 +42,8 @@ namespace {
         bool offerer = false;
         std::atomic_bool remoteDescriptionSet{false};
         std::atomic_bool signalPollPending{false};
+        std::chrono::steady_clock::time_point createdAt = std::chrono::steady_clock::now();
+        std::chrono::steady_clock::time_point lastSignalPollAt{};
         std::set<std::string> seenCandidates;
         std::mutex candidateMutex;
     };
@@ -138,6 +140,17 @@ namespace {
             auto channel = rtcGetChannel(session);
             if (channel && channel->isOpen() &&
                 session->pc->state() == rtc::PeerConnection::State::Connected) continue;
+
+            // Avoid hammering Firebase if direct ICE connectivity is impossible.
+            // Poll quickly during initial negotiation, then back off and give up
+            // after 90 seconds; no relay server is configured by design.
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - session->createdAt).count();
+            if (elapsed >= 90) continue;
+            auto interval = elapsed < 15 ? 1 : (elapsed < 45 ? 3 : 8);
+            if (session->lastSignalPollAt.time_since_epoch().count() != 0 &&
+                std::chrono::duration_cast<std::chrono::seconds>(now - session->lastSignalPollAt).count() < interval) continue;
+            session->lastSignalPollAt = now;
             if (session->signalPollPending.exchange(true)) continue;
             async::spawn(geode::utils::web::WebRequest()
                 .timeout(std::chrono::seconds(6))
