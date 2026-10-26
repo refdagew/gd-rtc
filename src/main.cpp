@@ -593,6 +593,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
     void pollRoom(float) {
         if (!this->getChildByID("gd-rtc-room-panel")) {
             this->unschedule(schedule_selector(GDRTCMenuLayer::pollRoom));
+            this->unschedule(schedule_selector(GDRTCMenuLayer::pollSignaling));
             return;
         }
         if (!g_activeRoomCode.empty()) {
@@ -869,7 +870,11 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
                    << "|" << (p2 ? 1 : 0) << "|" << this->getCurrentPercent()
                    << "|" << gm->getPlayerFrame() << "|" << gm->getPlayerColor()
                    << "|" << gm->getPlayerColor2() << "|" << (gm->m_playerGlow ? 1 : 0)
-                   << "|" << static_cast<int>(this->m_level->m_levelID);
+                   << "|" << static_cast<int>(this->m_level->m_levelID) << "|";
+            std::string safeLevelName = this->m_level->m_levelName.c_str();
+            for (auto& ch : safeLevelName) if (ch == '|' || ch == '\\n' || ch == '\\r') ch = ' ';
+            if (safeLevelName.size() > 63) safeLevelName.resize(63);
+            packet << safeLevelName;
             auto payload = packet.str();
             for (auto const& [remoteId, session] : g_rtcPeers) {
                 (void)remoteId;
@@ -886,9 +891,13 @@ class $modify(GDRTCPlayLayer, PlayLayer) {
         for (auto const& [remoteId, payload] : incoming) {
             float x = 0.f, y = 0.f, rotation = 0.f, x2 = 0.f, y2 = 0.f, rotation2 = 0.f, percent = 0.f;
             int dual = 0, icon = 1, color1 = 0, color2 = 3, glow = 0, levelId = -1;
-            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d",
-                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &color1, &color2, &glow, &levelId) != 13) continue;
-            if (levelId != static_cast<int>(this->m_level->m_levelID)) continue;
+            char remoteLevelName[64] = {};
+            if (std::sscanf(payload.c_str(), "S|%f|%f|%f|%f|%f|%f|%d|%f|%d|%d|%d|%d|%d|%63[^|]",
+                &x, &y, &rotation, &x2, &y2, &rotation2, &dual, &percent, &icon, &color1, &color2, &glow, &levelId, remoteLevelName) != 14) continue;
+            std::string localLevelName = this->m_level->m_levelName.c_str();
+            for (auto& ch : localLevelName) if (ch == '|' || ch == '\\n' || ch == '\\r') ch = ' ';
+            if (localLevelName.size() > 63) localLevelName.resize(63);
+            if (levelId != static_cast<int>(this->m_level->m_levelID) || localLevelName != remoteLevelName) continue;
 
             auto it = g_remoteAvatars.find(remoteId);
             CCNode* avatar = it == g_remoteAvatars.end() ? nullptr : it->second;
