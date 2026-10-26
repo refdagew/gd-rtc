@@ -34,8 +34,10 @@ namespace {
     }
 
     std::string playerName() {
-        // Account linking can be added later; use a clear local guest label for now.
-        return "Guest";
+        auto name = GameManager::sharedState()->getPlayerName();
+        if (name.empty()) name = "Guest";
+        if (name.size() > 32) name.resize(32);
+        return name;
     }
 
     std::string roomUrl(std::string const& code, std::string const& suffix = "") {
@@ -78,12 +80,24 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         return true;
     }
 
+    void setBackgroundMenusEnabled(bool enabled) {
+        auto children = this->getChildren();
+        if (!children) return;
+        for (unsigned int i = 0; i < children->count(); ++i) {
+            if (auto menu = typeinfo_cast<CCMenu*>(children->objectAtIndex(i))) {
+                if (menu->getID() != "gd-rtc-room-panel-menu") menu->setTouchEnabled(enabled);
+            }
+        }
+    }
+
     void onGDRTC(CCObject*) {
         if (auto existing = this->getChildByID("gd-rtc-room-panel")) {
             existing->removeFromParent();
+            setBackgroundMenusEnabled(true);
             return;
         }
 
+        setBackgroundMenusEnabled(false);
         auto win = CCDirector::sharedDirector()->getWinSize();
         auto panel = CCNode::create();
         panel->setID("gd-rtc-room-panel");
@@ -120,6 +134,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         panel->addChild(input);
 
         auto menu = CCMenu::create();
+        menu->setID("gd-rtc-room-panel-menu");
         menu->setPosition({win.width / 2, win.height / 2 - 30});
         panel->addChild(menu);
 
@@ -144,6 +159,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
     void onCloseRooms(CCObject*) {
         if (auto panel = this->getChildByID("gd-rtc-room-panel")) panel->removeFromParent();
+        setBackgroundMenusEnabled(true);
     }
 
     void onCreateRoom(CCObject*) {
@@ -169,7 +185,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .bodyJSON(room)
             .putSync(roomUrl(code));
         if (!response.ok()) {
-            showMessage("GD-RTC — Could not create room", responseError(response));
+            showMessage("GD-RTC", responseError(response));
             return;
         }
 
@@ -201,12 +217,12 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .timeout(std::chrono::seconds(12))
             .getSync(roomUrl(code));
         if (!roomResponse.ok()) {
-            showMessage("GD-RTC — Could not join", responseError(roomResponse));
+            showMessage("GD-RTC", responseError(roomResponse));
             return;
         }
         auto parsed = roomResponse.json();
         if (!parsed || parsed.unwrap().isNull()) {
-            showMessage("GD-RTC — Room not found", "No room exists with code " + code + ".");
+            showMessage("GD-RTC", "That room code wasn't found. Check the code and try again.");
             return;
         }
 
@@ -223,7 +239,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             .bodyJSON(member)
             .putSync(roomUrl(code, "/members/" + peer));
         if (!memberResponse.ok()) {
-            showMessage("GD-RTC — Could not join", responseError(memberResponse));
+            showMessage("GD-RTC", responseError(memberResponse));
             return;
         }
 
