@@ -1,5 +1,6 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
@@ -55,6 +56,31 @@ namespace {
         return std::string(kDatabaseUrl) + "/rooms/" + code + suffix + ".json";
     }
 
+    void shareCurrentLevel() {
+        if (g_activeRoomCode.empty() || g_activePeerId.empty()) return;
+        auto playLayer = PlayLayer::get();
+        if (!playLayer || !playLayer->m_level) return;
+        auto level = playLayer->m_level;
+        std::string levelData(level->m_levelString.c_str());
+        std::string levelName(level->m_levelName.c_str());
+        if (levelData.empty() || levelData.size() > 950000) return;
+        if (levelName.empty()) levelName = "Shared level";
+        if (levelName.size() > 100) levelName.resize(100);
+
+        auto key = g_activePeerId + "_" + std::to_string(static_cast<long long>(nowSeconds()));
+        matjson::Value payload = matjson::Value::object();
+        payload["name"] = levelName;
+        payload["levelData"] = levelData;
+        payload["owner"] = playerName();
+        payload["updatedAt"] = nowSeconds();
+        payload["sourceLevelId"] = static_cast<int>(level->m_levelID);
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(20))
+            .bodyJSON(payload)
+            .put(roomUrl(g_activeRoomCode, "/levels/" + key)),
+            [](geode::utils::web::WebResponse) {});
+    }
+
     std::string responseError(geode::utils::web::WebResponse const& response) {
         (void)response;
         return "Connection failed. Please try again.";
@@ -88,6 +114,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (auto item = menu->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
             if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
+            if (auto item = menu->getChildByID("gd-rtc-open-level")) item->setVisible(inRoom);
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
             input->setEnabled(!inRoom);
@@ -230,7 +257,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", 80, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCloseRooms));
-        closeBtn->setPosition({0, -80});
+        auto openLevelBtn = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Open Shared Level", 150, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
+            this, menu_selector(GDRTCMenuLayer::onOpenSharedLevel));
+        openLevelBtn->setID("gd-rtc-open-level");
+        openLevelBtn->setPosition({0, -78});
+        menu->addChild(openLevelBtn);
+
+        closeBtn->setPosition({0, -111});
         menu->addChild(closeBtn);
 
         updateRoomControls(!g_activeRoomCode.empty());
@@ -459,6 +493,59 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             });
     }
 
+    void onOpenSharedLevel(CCObject*) {
+        if (g_activeRoomCode.empty()) {
+            setRoomStatus("Join a room first.");
+            return;
+        }
+        setRoomStatus("Looking for a shared level...");
+        auto code = g_activeRoomCode;
+        Ref<GDRTCMenuLayer> self = this;
+        async::spawn(geode::utils::web::WebRequest()
+            .timeout(std::chrono::seconds(15))
+            .get(roomUrl(code, "/levels")),
+            [self](geode::utils::web::WebResponse response) {
+                if (!response.ok()) {
+                    self->setRoomStatus("Couldn't load shared levels.");
+                    return;
+                }
+                auto parsed = response.json();
+                if (!parsed || parsed.unwrap().isNull()) {
+                    self->setRoomStatus("No level has been shared to this room yet.");
+                    return;
+                }
+
+                matjson::Value latest;
+                double latestTime = -1.0;
+                for (auto const& [key, candidate] : parsed.unwrap()) {
+                    (void)key;
+                    auto time = candidate["updatedAt"].asDouble();
+                    double timestamp = time ? time.unwrap() : 0.0;
+                    if (timestamp > latestTime) {
+                        latestTime = timestamp;
+                        latest = candidate;
+                    }
+                }
+                auto nameResult = latest["name"].asString();
+                auto dataResult = latest["levelData"].asString();
+                if (!nameResult || !dataResult || dataResult.unwrap().empty()) {
+                    self->setRoomStatus("The shared level data is invalid.");
+                    return;
+                }
+                auto level = GJGameLevel::create();
+                level->m_levelName = nameResult.unwrap();
+                level->m_levelString = dataResult.unwrap();
+                level->m_levelID = 0;
+                auto scene = LevelEditorLayer::scene(level, false);
+                if (!scene) {
+                    self->setRoomStatus("Couldn't open that level.");
+                    return;
+                }
+                self->setRoomStatus("Opening " + std::string(nameResult.unwrap()) + "...");
+                CCDirector::sharedDirector()->pushScene(scene);
+            });
+    }
+
     void onLeaveRoom(CCObject*) {
         if (g_activeRoomCode.empty() || g_activePeerId.empty()) {
             setRoomStatus("You are not in a room.");
@@ -507,5 +594,29 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                         }
                     });
             });
+    }
+};
+
+
+class $modify(GDRTCPauseLayer, PauseLayer) {
+    bool init() {
+        if (!PauseLayer::init()) return false;
+        if (g_activeRoomCode.empty()) return true;
+
+        auto win = CCDirector::sharedDirector()->getWinSize();
+        auto menu = CCMenu::create();
+        menu->setID("gd-rtc-pause-share-menu");
+        menu->setPosition({win.width / 2, win.height * 0.14f});
+        auto button = CCMenuItemSpriteExtra::create(
+            ButtonSprite::create("Share Level", 112, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .6f),
+            this, menu_selector(GDRTCPauseLayer::onShareLevel));
+        button->setID("gd-rtc-pause-share-button");
+        menu->addChild(button);
+        this->addChild(menu, 100);
+        return true;
+    }
+
+    void onShareLevel(CCObject*) {
+        shareCurrentLevel();
     }
 };
