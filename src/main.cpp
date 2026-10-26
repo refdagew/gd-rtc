@@ -1,6 +1,5 @@
 #include <Geode/Geode.hpp>
 #include <Geode/modify/MenuLayer.hpp>
-#include <Geode/modify/PauseLayer.hpp>
 #include <Geode/ui/TextInput.hpp>
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
@@ -9,8 +8,6 @@
 #include <cctype>
 #include <random>
 #include <string>
-#include <vector>
-#include <map>
 
 using namespace geode::prelude;
 
@@ -21,16 +18,10 @@ namespace {
     std::string g_activePeerId;
     bool g_refreshPending = false;
     bool g_roomOperationPending = false;
-    std::vector<std::pair<std::string, std::string>> g_savedLevelsCache;
-    bool g_stateSendPending = false;
-    bool g_statePollPending = false;
-    std::map<std::string, CCNode*> g_remoteAvatars;
 
-    // Keep sub-second precision: the old integer-second clock accidentally made
-    // the 10 Hz send / 4 Hz poll thresholds true for every frame during a whole second.
     double nowSeconds() {
-        return std::chrono::duration<double>(
-            std::chrono::system_clock::now().time_since_epoch()).count();
+        return static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
     }
 
     std::string makeRoomCode() {
@@ -62,61 +53,6 @@ namespace {
 
     std::string roomUrl(std::string const& code, std::string const& suffix = "") {
         return std::string(kDatabaseUrl) + "/rooms/" + code + suffix + ".json";
-    }
-
-    void cacheSharedLevel(std::string const& name, std::string const& data, double updatedAt) {
-        if (data.empty() || data.size() > 950000) return;
-        auto raw = Mod::get()->getSavedValue<std::string>("saved-levels-json", "[]");
-        auto parsed = matjson::Value::parse(raw);
-        auto levels = matjson::Value::array();
-        if (parsed && parsed.unwrap().isArray()) {
-            auto const& old = parsed.unwrap();
-            auto first = old.size() > 4 ? old.size() - 4 : 0;
-            for (size_t i = first; i < old.size(); ++i) levels.push(old[i]);
-        }
-        matjson::Value entry = matjson::Value::object();
-        entry["name"] = name;
-        entry["levelData"] = data;
-        entry["updatedAt"] = updatedAt;
-        levels.push(entry);
-        Mod::get()->setSavedValue<std::string>("saved-levels-json", levels.dump());
-        Mod::get()->setSavedValue<std::string>("saved-level-name", name);
-        Mod::get()->setSavedValue<std::string>("saved-level-data", data);
-    }
-
-    void openLevelEditor(std::string const& name, std::string const& data) {
-        if (name.empty() || data.empty()) return;
-        auto level = GJGameLevel::create();
-        level->m_levelName = name.c_str();
-        level->m_levelString = data.c_str();
-        level->m_levelID = 0;
-        auto scene = LevelEditorLayer::scene(level, false);
-        if (scene) CCDirector::sharedDirector()->pushScene(scene);
-    }
-
-    void shareCurrentLevel() {
-        if (g_activeRoomCode.empty() || g_activePeerId.empty()) return;
-        auto playLayer = PlayLayer::get();
-        if (!playLayer || !playLayer->m_level) return;
-        auto level = playLayer->m_level;
-        std::string levelData(level->m_levelString.c_str());
-        std::string levelName(level->m_levelName.c_str());
-        if (levelData.empty() || levelData.size() > 950000) return;
-        if (levelName.empty()) levelName = "Shared level";
-        if (levelName.size() > 100) levelName.resize(100);
-
-        auto key = g_activePeerId + "_" + std::to_string(static_cast<long long>(nowSeconds()));
-        matjson::Value payload = matjson::Value::object();
-        payload["name"] = levelName;
-        payload["levelData"] = levelData;
-        payload["owner"] = playerName();
-        payload["updatedAt"] = nowSeconds();
-        payload["sourceLevelId"] = static_cast<int>(level->m_levelID);
-        async::spawn(geode::utils::web::WebRequest()
-            .timeout(std::chrono::seconds(20))
-            .bodyJSON(payload)
-            .put(roomUrl(g_activeRoomCode, "/levels/" + key)),
-            [](geode::utils::web::WebResponse) {});
     }
 
     std::string responseError(geode::utils::web::WebResponse const& response) {
@@ -152,12 +88,6 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
             if (auto item = menu->getChildByID("gd-rtc-join")) item->setVisible(!inRoom);
             if (auto item = menu->getChildByID("gd-rtc-refresh")) item->setVisible(inRoom);
             if (auto item = menu->getChildByID("gd-rtc-leave")) item->setVisible(inRoom);
-            if (auto item = menu->getChildByID("gd-rtc-open-level")) item->setVisible(inRoom);
-            if (auto item = menu->getChildByID("gd-rtc-saved-level")) {
-                auto cached = Mod::get()->getSavedValue<std::string>("saved-levels-json", "[]");
-                auto saved = matjson::Value::parse(cached);
-                item->setVisible(!inRoom && saved && saved.unwrap().isArray() && saved.unwrap().size() > 0);
-            }
         }
         if (auto input = typeinfo_cast<geode::TextInput*>(panel->getChildByID("gd-rtc-room-code-input"))) {
             input->setEnabled(!inRoom);
@@ -184,14 +114,18 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         }
     }
 
-    void setBackgroundMenusEnabled(bool enabled) {
-        auto children = this->getChildren();
+    void setMenuTouchRecursive(CCNode* node, bool enabled, CCNode* skip) {
+        if (!node || node == skip) return;
+        if (auto menu = typeinfo_cast<CCMenu*>(node)) menu->setTouchEnabled(enabled);
+        auto children = node->getChildren();
         if (!children) return;
         for (unsigned int i = 0; i < children->count(); ++i) {
-            if (auto menu = typeinfo_cast<CCMenu*>(children->objectAtIndex(i))) {
-                if (menu->getID() != "gd-rtc-room-panel-menu") menu->setTouchEnabled(enabled);
-            }
+            setMenuTouchRecursive(typeinfo_cast<CCNode*>(children->objectAtIndex(i)), enabled, skip);
         }
+    }
+
+    void setBackgroundMenusEnabled(bool enabled) {
+        setMenuTouchRecursive(this, enabled, this->getChildByID("gd-rtc-room-panel"));
     }
 
     void onGDRTC(CCObject*) {
@@ -249,24 +183,24 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
         auto membersBack = CCLayerColor::create({8, 14, 31, 220});
         membersBack->setContentSize({310.f, 104.f});
-        membersBack->setPosition({-155.f, -18.f});
+        membersBack->setPosition({-155.f, -32.f});
         panel->addChild(membersBack, 0);
 
         auto members = CCLabelBMFont::create("Players in room:\n—", "goldFont.fnt");
         members->setID("gd-rtc-room-members");
         members->setScale(0.42f);
-        members->setPosition({0, 30.f});
+        members->setPosition({0, 21.f});
         panel->addChild(members);
 
         auto status = CCLabelBMFont::create("Ready", "goldFont.fnt");
         status->setID("gd-rtc-room-status");
         status->setScale(0.42f);
-        status->setPosition({0, -182.f});
+        status->setPosition({0, -178.f});
         panel->addChild(status);
 
         auto menu = CCMenu::create();
         menu->setID("gd-rtc-room-panel-menu");
-        menu->setPosition({0, -94.f});
+        menu->setPosition({0, -70.f});
         panel->addChild(menu);
 
         auto createBtn = CCMenuItemSpriteExtra::create(
@@ -300,21 +234,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto closeBtn = CCMenuItemSpriteExtra::create(
             ButtonSprite::create("Close", 80, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .65f),
             this, menu_selector(GDRTCMenuLayer::onCloseRooms));
-        auto openLevelBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Open Shared Level", 150, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
-            this, menu_selector(GDRTCMenuLayer::onOpenSharedLevel));
-        openLevelBtn->setID("gd-rtc-open-level");
-        openLevelBtn->setPosition({0, -30});
-        menu->addChild(openLevelBtn);
-
-        auto savedLevelBtn = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Saved Levels", 115, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .58f),
-            this, menu_selector(GDRTCMenuLayer::onOpenSavedLevel));
-        savedLevelBtn->setID("gd-rtc-saved-level");
-        savedLevelBtn->setPosition({0, -30});
-        menu->addChild(savedLevelBtn);
-
-        closeBtn->setPosition({0, -63});
+        closeBtn->setPosition({0, -80});
         menu->addChild(closeBtn);
 
         updateRoomControls(!g_activeRoomCode.empty());
@@ -523,142 +443,14 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                     if (count >= 8) break;
                     auto result = value["name"].asString();
                     std::string name = result ? result.unwrap() : "Player";
-                    if (name.size() > 20) name.resize(20);
+                    if (name.size() > 24) name.resize(24);
                     names += "\n• " + name;
-                    auto state = data["states"][id];
-                    auto level = state["levelName"].asString();
-                    auto percent = state["percent"].asDouble();
-                    auto updated = state["updatedAt"].asDouble();
-                    if (level && updated && nowSeconds() - updated.unwrap() < 5.0) {
-                        std::string levelLabel = level.unwrap();
-                        if (levelLabel.size() > 18) levelLabel.resize(18);
-                        names += " — " + levelLabel;
-                        if (percent) names += " " + std::to_string(static_cast<int>(percent.unwrap())) + "%";
-                    }
                     ++count;
                 }
                 if (!count) names += "\n—";
                 self->setRoomMembers(names);
                 if (g_activeRoomCode == code) self->setRoomStatus("Room " + code + " · " + std::to_string(count) + "/8 players");
             });
-    }
-
-    void onOpenSharedLevel(CCObject*) {
-        if (g_activeRoomCode.empty()) {
-            setRoomStatus("Join a room first.");
-            return;
-        }
-        setRoomStatus("Looking for a shared level...");
-        auto code = g_activeRoomCode;
-        Ref<GDRTCMenuLayer> self = this;
-        async::spawn(geode::utils::web::WebRequest()
-            .timeout(std::chrono::seconds(15))
-            .get(roomUrl(code, "/levels")),
-            [self](geode::utils::web::WebResponse response) {
-                if (!response.ok()) {
-                    self->setRoomStatus("Couldn't load shared levels.");
-                    return;
-                }
-                auto parsed = response.json();
-                if (!parsed || parsed.unwrap().isNull()) {
-                    self->setRoomStatus("No level has been shared to this room yet.");
-                    return;
-                }
-
-                matjson::Value latest;
-                double latestTime = -1.0;
-                for (auto const& [key, candidate] : parsed.unwrap()) {
-                    (void)key;
-                    auto time = candidate["updatedAt"].asDouble();
-                    double timestamp = time ? time.unwrap() : 0.0;
-                    if (timestamp > latestTime) {
-                        latestTime = timestamp;
-                        latest = candidate;
-                    }
-                }
-                auto nameResult = latest["name"].asString();
-                auto dataResult = latest["levelData"].asString();
-                if (!nameResult || !dataResult || dataResult.unwrap().empty()) {
-                    self->setRoomStatus("The shared level data is invalid.");
-                    return;
-                }
-                auto name = std::string(nameResult.unwrap());
-                auto data = std::string(dataResult.unwrap());
-                // Cache the latest downloaded level locally so it can be reopened later,
-                // even when the player is no longer in this room.
-                cacheSharedLevel(name, data, latestTime);
-                self->setRoomStatus("Opening " + name + "...");
-                openLevelEditor(name, data);
-            });
-    }
-
-    void onOpenSavedLevel(CCObject*) {
-        auto raw = Mod::get()->getSavedValue<std::string>("saved-levels-json", "[]");
-        auto parsed = matjson::Value::parse(raw);
-        g_savedLevelsCache.clear();
-        if (parsed && parsed.unwrap().isArray()) {
-            auto const& levels = parsed.unwrap();
-            for (size_t i = 0; i < levels.size(); ++i) {
-                auto name = levels[i]["name"].asString();
-                auto data = levels[i]["levelData"].asString();
-                if (name && data && !data.unwrap().empty()) {
-                    g_savedLevelsCache.emplace_back(name.unwrap(), data.unwrap());
-                }
-            }
-        }
-        if (g_savedLevelsCache.empty()) {
-            setRoomStatus("No saved levels yet.");
-            return;
-        }
-
-        auto win = CCDirector::sharedDirector()->getWinSize();
-        auto scene = CCScene::create();
-        auto bg = CCLayerColor::create({12, 20, 40, 255});
-        bg->setContentSize(win);
-        scene->addChild(bg);
-        auto title = CCLabelBMFont::create("Saved Shared Levels", "bigFont.fnt");
-        title->setPosition({win.width / 2, win.height - 45.f});
-        title->setScale(0.7f);
-        scene->addChild(title);
-        auto menu = CCMenu::create();
-        menu->setPosition({win.width / 2, win.height / 2});
-        scene->addChild(menu);
-        auto maxRows = std::min<size_t>(g_savedLevelsCache.size(), 5);
-        for (size_t i = 0; i < maxRows; ++i) {
-            auto label = g_savedLevelsCache[g_savedLevelsCache.size() - 1 - i].first;
-            if (label.size() > 24) label.resize(24);
-            auto item = CCMenuItemSpriteExtra::create(
-                ButtonSprite::create(label.c_str(), 250, true, "bigFont.fnt", "GJ_button_01.png", 30.f, .55f),
-                this, menu_selector(GDRTCMenuLayer::onOpenSavedLevelByIndex));
-            item->setTag(static_cast<int>(g_savedLevelsCache.size() - 1 - i));
-            item->setPosition({0, 70.f - static_cast<float>(i) * 42.f});
-            menu->addChild(item);
-        }
-        auto closeMenu = CCMenu::create();
-        closeMenu->setPosition({win.width / 2, 32.f});
-        scene->addChild(closeMenu);
-        auto close = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Back", 90, true, "bigFont.fnt", "GJ_button_04.png", 30.f, .6f),
-            this, menu_selector(GDRTCMenuLayer::onCloseSavedLevels));
-        closeMenu->addChild(close);
-        auto scale = std::min(1.0f, std::min((win.width - 24.f) / 320.f, (win.height - 24.f) / 360.f));
-        title->setScale(0.7f * std::max(0.65f, scale));
-        menu->setScale(std::max(0.65f, scale));
-        closeMenu->setScale(std::max(0.65f, scale));
-        CCDirector::sharedDirector()->pushScene(scene);
-    }
-
-    void onOpenSavedLevelByIndex(CCObject* sender) {
-        auto item = typeinfo_cast<CCMenuItemSpriteExtra*>(sender);
-        if (!item) return;
-        auto index = item->getTag();
-        if (index < 0 || static_cast<size_t>(index) >= g_savedLevelsCache.size()) return;
-        auto const level = g_savedLevelsCache[static_cast<size_t>(index)];
-        openLevelEditor(level.first, level.second);
-    }
-
-    void onCloseSavedLevels(CCObject*) {
-        CCDirector::sharedDirector()->popScene();
     }
 
     void onLeaveRoom(CCObject*) {
@@ -681,8 +473,6 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                 if (g_activeRoomCode == code && g_activePeerId == peer) {
                     g_activeRoomCode.clear();
                     g_activePeerId.clear();
-                    g_stateSendPending = false;
-                    g_statePollPending = false;
                 }
                 self->updateRoomControls(false);
                 self->setRoomMembers("Players in room:\n—");
@@ -711,205 +501,5 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
                         }
                     });
             });
-    }
-};
-
-
-class $modify(GDRTCPauseLayer, PauseLayer) {
-    bool init(bool unfocused) {
-        if (!PauseLayer::init(unfocused)) return false;
-        if (g_activeRoomCode.empty()) return true;
-
-        auto win = CCDirector::sharedDirector()->getWinSize();
-        auto menu = CCMenu::create();
-        menu->setID("gd-rtc-pause-share-menu");
-        menu->setPosition({win.width / 2, win.height * 0.14f});
-        auto button = CCMenuItemSpriteExtra::create(
-            ButtonSprite::create("Share Level", 112, true, "bigFont.fnt", "GJ_button_02.png", 30.f, .6f),
-            this, menu_selector(GDRTCPauseLayer::onShareLevel));
-        button->setID("gd-rtc-pause-share-button");
-        menu->addChild(button);
-        this->addChild(menu, 100);
-        return true;
-    }
-
-    void onShareLevel(CCObject*) {
-        shareCurrentLevel();
-    }
-};
-
-
-class $modify(GDRTCPlayLayer, PlayLayer) {
-    void postUpdate(float dt) {
-        PlayLayer::postUpdate(dt);
-
-        if (g_activeRoomCode.empty() || g_activePeerId.empty() || !this->m_player1 || !this->m_level) {
-            for (auto const& [peer, node] : g_remoteAvatars) {
-                (void)peer;
-                if (node && node->getParent()) node->removeFromParent();
-            }
-            g_remoteAvatars.clear();
-            return;
-        }
-
-        static PlayLayer* lastLayer = nullptr;
-        static double lastSendAt = 0.0;
-        static double lastPollAt = 0.0;
-        static double lastHeartbeatAt = 0.0;
-        if (lastLayer != this) {
-            g_remoteAvatars.clear();
-            lastLayer = this;
-            lastSendAt = 0.0;
-            lastPollAt = 0.0;
-            lastHeartbeatAt = 0.0;
-        }
-
-        auto now = nowSeconds();
-        auto code = g_activeRoomCode;
-        auto peer = g_activePeerId;
-        auto player = this->m_player1;
-
-        // Keep presence alive while actually playing, not only while the room
-        // overlay happens to be open in the main menu.
-        if (now - lastHeartbeatAt >= 10.0) {
-            lastHeartbeatAt = now;
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(6))
-                .bodyJSON(now)
-                .put(roomUrl(code, "/lastSeen")),
-                [](geode::utils::web::WebResponse) {});
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(6))
-                .bodyJSON(now)
-                .put(roomUrl(code, "/members/" + peer + "/lastSeen")),
-                [](geode::utils::web::WebResponse) {});
-        }
-        auto levelName = std::string(this->m_level->m_levelName.c_str());
-        auto levelID = static_cast<int>(this->m_level->m_levelID);
-        auto position = player->getPosition();
-        auto rotation = player->getRotation();
-        auto secondary = this->m_player2;
-        auto secondaryPosition = secondary ? secondary->getPosition() : position;
-        auto secondaryRotation = secondary ? secondary->getRotation() : rotation;
-        auto percent = this->getCurrentPercent();
-
-        // RTDB is the relay in this no-STUN/no-TURN build. State is sampled at
-        // 10 Hz; the remote overlay is refreshed at about 4 Hz to keep traffic bounded.
-        if (now - lastSendAt >= 0.10 && !g_stateSendPending) {
-            lastSendAt = now;
-            g_stateSendPending = true;
-            matjson::Value state = matjson::Value::object();
-            state["peerId"] = peer;
-            state["name"] = playerName();
-            state["x"] = position.x;
-            state["y"] = position.y;
-            state["rotation"] = rotation;
-            state["x2"] = secondaryPosition.x;
-            state["y2"] = secondaryPosition.y;
-            state["rotation2"] = secondaryRotation;
-            state["dual"] = secondary ? 1 : 0;
-            state["percent"] = percent;
-            state["levelId"] = levelID;
-            state["levelName"] = levelName;
-            state["updatedAt"] = now;
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(5))
-                .bodyJSON(state)
-                .put(roomUrl(code, "/states/" + peer)),
-                [](geode::utils::web::WebResponse) {
-                    g_stateSendPending = false;
-                });
-        }
-
-        if (now - lastPollAt >= 0.25 && !g_statePollPending) {
-            lastPollAt = now;
-            g_statePollPending = true;
-            Ref<GDRTCPlayLayer> self = this;
-            async::spawn(geode::utils::web::WebRequest()
-                .timeout(std::chrono::seconds(6))
-                .get(roomUrl(code, "/states")),
-                [self, code, peer, levelID, levelName](geode::utils::web::WebResponse response) {
-                    g_statePollPending = false;
-                    if (g_activeRoomCode != code || g_activePeerId != peer || PlayLayer::get() != self) return;
-                    if (!response.ok()) return;
-                    auto parsed = response.json();
-                    if (!parsed || parsed.unwrap().isNull()) return;
-                    auto states = parsed.unwrap();
-                    auto now = nowSeconds();
-                    std::vector<std::string> seen;
-
-                    for (auto const& [remotePeer, state] : states) {
-                        if (remotePeer == peer) continue;
-                        auto updated = state["updatedAt"].asDouble();
-                        auto x = state["x"].asDouble();
-                        auto y = state["y"].asDouble();
-                        auto angle = state["rotation"].asDouble();
-                        auto x2 = state["x2"].asDouble();
-                        auto y2 = state["y2"].asDouble();
-                        auto angle2 = state["rotation2"].asDouble();
-                        auto dual = state["dual"].asInt();
-                        auto pct = state["percent"].asDouble();
-                        auto remoteLevelId = state["levelId"].asInt();
-                        auto remoteLevelName = state["levelName"].asString();
-                        auto remoteName = state["name"].asString();
-                        if (!updated || !x || !y || !remoteLevelId || !remoteLevelName) continue;
-                        if (now - updated.unwrap() > 5.0 || now < updated.unwrap() - 10.0) continue;
-                        if (remoteLevelId.unwrap() != levelID || remoteLevelName.unwrap() != levelName) continue;
-
-                        auto it = g_remoteAvatars.find(remotePeer);
-                        CCNode* avatar = nullptr;
-                        if (it == g_remoteAvatars.end() || !it->second || !it->second->getParent()) {
-                            avatar = CCNode::create();
-                            auto marker = CCLayerColor::create({80, 220, 255, 220}, 18.f, 18.f);
-                            marker->setPosition({-9.f, -9.f});
-                            avatar->addChild(marker, 0);
-                            auto label = CCLabelBMFont::create("Player", "goldFont.fnt");
-                            label->setID("gd-rtc-remote-name");
-                            label->setAnchorPoint({0.5f, 0.f});
-                            label->setPosition({0.f, 14.f});
-                            label->setScale(0.42f);
-                            avatar->addChild(label, 1);
-                            self->addChild(avatar, 999);
-                            g_remoteAvatars[remotePeer] = avatar;
-                        } else {
-                            avatar = it->second;
-                        }
-                        auto secondaryMarker = typeinfo_cast<CCNode*>(avatar->getChildByID("gd-rtc-remote-secondary"));
-                        if (!secondaryMarker) {
-                            secondaryMarker = CCLayerColor::create({255, 205, 90, 230}, 12.f, 12.f);
-                            secondaryMarker->setID("gd-rtc-remote-secondary");
-                            secondaryMarker->setPosition({0.f, 0.f});
-                            avatar->addChild(secondaryMarker, 0);
-                        }
-                        bool showDual = dual && dual.unwrap() != 0 && x2 && y2;
-                        secondaryMarker->setVisible(showDual);
-                        if (showDual) {
-                            secondaryMarker->setPosition({
-                                static_cast<float>(x2.unwrap() - x.unwrap()),
-                                static_cast<float>(y2.unwrap() - y.unwrap())
-                            });
-                            if (angle2) secondaryMarker->setRotation(static_cast<float>(angle2.unwrap() - angle.unwrap()));
-                        }
-                        if (auto label = typeinfo_cast<CCLabelBMFont*>(avatar->getChildByID("gd-rtc-remote-name"))) {
-                            std::string displayName = remoteName ? remoteName.unwrap() : "Player";
-                            if (pct) displayName += " " + std::to_string(static_cast<int>(pct.unwrap())) + "%";
-                            if (displayName.size() > 34) displayName.resize(34);
-                            label->setString(displayName.c_str());
-                        }
-                        avatar->setPosition({static_cast<float>(x.unwrap()), static_cast<float>(y.unwrap())});
-                        if (angle) avatar->setRotation(static_cast<float>(angle.unwrap()));
-                        seen.push_back(remotePeer);
-                    }
-
-                    for (auto it = g_remoteAvatars.begin(); it != g_remoteAvatars.end();) {
-                        if (std::find(seen.begin(), seen.end(), it->first) == seen.end()) {
-                            if (it->second && it->second->getParent()) it->second->removeFromParent();
-                            it = g_remoteAvatars.erase(it);
-                        } else {
-                            ++it;
-                        }
-                    }
-                });
-        }
     }
 };
