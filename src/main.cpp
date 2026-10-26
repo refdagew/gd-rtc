@@ -10,6 +10,7 @@
 #include <matjson.hpp>
 #include <rtc/rtc.hpp>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <algorithm>
 #include <atomic>
