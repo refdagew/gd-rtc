@@ -4,6 +4,7 @@
 #include <Geode/utils/web.hpp>
 #include <matjson.hpp>
 #include <chrono>
+#include <cctype>
 #include <random>
 #include <string>
 
@@ -163,7 +164,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
         auto response = geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(12))
             .bodyJSON(room)
-            .put(roomUrl(code));
+            .putSync(roomUrl(code));
         if (!response.ok()) {
             showMessage("GD-RTC — Could not create room", responseError(response));
             return;
@@ -185,7 +186,7 @@ class $modify(GDRTCMenuLayer, MenuLayer) {
 
         auto roomResponse = geode::utils::web::WebRequest()
             .timeout(std::chrono::seconds(12))
-            .get(roomUrl(code));
+            .getSync(roomUrl(code));
         if (!roomResponse.ok()) {
             showMessage("GD-RTC — Could not join", responseError(roomResponse));
             return;
