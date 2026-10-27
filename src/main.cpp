@@ -62,6 +62,7 @@ namespace {
         bool offerer = false;
         std::atomic_bool remoteDescriptionSet{false};
         std::atomic_bool signalPollPending{false};
+        std::atomic_bool failed{false};
         std::chrono::steady_clock::time_point createdAt = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point lastSignalPollAt{};
         std::set<std::string> seenCandidates;
@@ -114,7 +115,9 @@ namespace {
                     .timeout(std::chrono::seconds(8))
                     .bodyJSON(body)
                     .put(roomUrl(room, "/members/" + self + "/signals/" + remoteId + "/" + type)),
-                    [](geode::utils::web::WebResponse) {});
+                    [remoteId, type](geode::utils::web::WebResponse response) {
+                        if (!response.ok()) log::warn("GD-RTC: failed to send {} to peer {} (HTTP {})", type, remoteId, response.code());
+                    });
             });
             session->pc->onLocalCandidate([room, self, remoteId](rtc::Candidate candidate) {
                 if (g_activeRoomCode != room || g_activePeerId != self) return;
@@ -125,7 +128,9 @@ namespace {
                     .timeout(std::chrono::seconds(8))
                     .bodyJSON(body)
                     .post(roomUrl(room, "/members/" + self + "/signals/" + remoteId + "/candidates")),
-                    [](geode::utils::web::WebResponse) {});
+                    [remoteId](geode::utils::web::WebResponse response) {
+                        if (!response.ok()) log::warn("GD-RTC: failed to send ICE candidate to peer {} (HTTP {})", remoteId, response.code());
+                    });
             });
             session->pc->onDataChannel([remoteId, session](std::shared_ptr<rtc::DataChannel> channel) {
                 {
@@ -139,10 +144,14 @@ namespace {
                     g_rtcMessages.emplace_back(remoteId, std::get<rtc::string>(std::move(message)));
                 });
             });
-            session->pc->onStateChange([remoteId](rtc::PeerConnection::State state) {
+            session->pc->onStateChange([remoteId, session](rtc::PeerConnection::State state) {
                 if (state == rtc::PeerConnection::State::Failed ||
                     state == rtc::PeerConnection::State::Closed) {
-                    log::warn("GD-RTC WebRTC peer {} disconnected", remoteId);
+                    session->failed = true;
+                    log::warn("GD-RTC WebRTC peer {} entered terminal state {}; it will be retried",
+                        remoteId, static_cast<int>(state));
+                } else if (state == rtc::PeerConnection::State::Connected) {
+                    log::info("GD-RTC WebRTC data path connected to peer {}", remoteId);
                 }
             });
             g_rtcPeers[remoteId] = session;
@@ -179,6 +188,14 @@ namespace {
             auto channel = rtcGetChannel(session);
             if (channel && channel->isOpen() &&
                 session->pc->state() == rtc::PeerConnection::State::Connected) continue;
+
+            // Failed handshakes must not leave a dead session blocking rtcEnsurePeer().
+            // Remove it immediately so the next low-frequency member scan can retry.
+            if (session->failed.load() ||
+                (session->pc && session->pc->state() == rtc::PeerConnection::State::Failed)) {
+                timedOutPeers.push_back(remoteId);
+                continue;
+            }
 
             // Avoid hammering Firebase if direct ICE connectivity is impossible.
             // Poll quickly during initial negotiation, then back off and give up
@@ -250,7 +267,7 @@ namespace {
                 if (it->second->pc) it->second->pc->close();
             } catch (...) {}
             g_rtcPeers.erase(it);
-            log::warn("GD-RTC: direct connection to {} timed out; will retry discovery", remoteId);
+            log::warn("GD-RTC: removed failed/timed-out peer session for {}; next member scan can retry", remoteId);
         }
     }
 
