@@ -60,6 +60,9 @@ namespace {
         std::shared_ptr<rtc::DataChannel> channel;
         std::mutex channelMutex;
         bool offerer = false;
+        // A peer must clear its own previous signaling mailbox before either
+        // publishing a new offer/answer or consuming a new offer.
+        std::atomic_bool signalMailboxReady{false};
         std::atomic_bool remoteDescriptionSet{false};
         std::atomic_bool signalPollPending{false};
         std::atomic_bool failed{false};
@@ -156,23 +159,43 @@ namespace {
                 }
             });
             g_rtcPeers[remoteId] = session;
-            if (session->offerer) {
-                rtc::DataChannelInit channelConfig;
-                channelConfig.reliability.unordered = true;
-                channelConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(100);
-                auto channel = session->pc->createDataChannel("gd-rtc-gameplay", channelConfig);
-                {
-                    std::lock_guard<std::mutex> lock(session->channelMutex);
-                    session->channel = channel;
-                }
-                channel->onMessage([remoteId](rtc::message_variant message) {
-                    if (!std::holds_alternative<rtc::string>(message)) return;
-                    std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
-                    if (g_rtcMessages.size() > 128) g_rtcMessages.pop_front();
-                    g_rtcMessages.emplace_back(remoteId, std::get<rtc::string>(std::move(message)));
+
+            // Firebase keeps old offers, answers, and ICE candidates unless
+            // explicitly removed. Reusing those entries can make a retry
+            // negotiate against an obsolete connection. Clear only our outgoing
+            // mailbox, then begin negotiation; the other peer's mailbox is untouched.
+            async::spawn(geode::utils::web::WebRequest()
+                .timeout(std::chrono::seconds(8))
+                .send("DELETE", roomUrl(room, "/members/" + self + "/signals/" + remoteId)),
+                [room, self, remoteId, session](geode::utils::web::WebResponse response) {
+                    if (g_activeRoomCode != room || g_activePeerId != self) return;
+                    if (!response.ok()) {
+                        log::warn("GD-RTC: could not clear old signaling mailbox for peer {} (HTTP {})",
+                            remoteId, response.code());
+                    }
+                    session->signalMailboxReady = true;
+                    if (!session->offerer) return;
+                    try {
+                        rtc::DataChannelInit channelConfig;
+                        channelConfig.reliability.unordered = true;
+                        channelConfig.reliability.maxPacketLifeTime = std::chrono::milliseconds(100);
+                        auto channel = session->pc->createDataChannel("gd-rtc-gameplay", channelConfig);
+                        {
+                            std::lock_guard<std::mutex> lock(session->channelMutex);
+                            session->channel = channel;
+                        }
+                        channel->onMessage([remoteId](rtc::message_variant message) {
+                            if (!std::holds_alternative<rtc::string>(message)) return;
+                            std::lock_guard<std::mutex> lock(g_rtcMessagesMutex);
+                            if (g_rtcMessages.size() > 128) g_rtcMessages.pop_front();
+                            g_rtcMessages.emplace_back(remoteId, std::get<rtc::string>(std::move(message)));
+                        });
+                        session->pc->setLocalDescription(rtc::Description::Type::Offer);
+                    } catch (std::exception const& e) {
+                        session->failed = true;
+                        log::error("GD-RTC offer creation failed for peer {}: {}", remoteId, e.what());
+                    }
                 });
-                session->pc->setLocalDescription(rtc::Description::Type::Offer);
-            }
         } catch (std::exception const& e) {
             log::error("GD-RTC WebRTC setup failed: {}", e.what());
             g_rtcPeers.erase(remoteId);
@@ -185,6 +208,7 @@ namespace {
         auto self = g_activePeerId;
         std::vector<std::string> timedOutPeers;
         for (auto const& [remoteId, session] : g_rtcPeers) {
+            if (!session->signalMailboxReady.load()) continue;
             // Stop touching RTDB entirely once the peer-to-peer channel is live.
             auto channel = rtcGetChannel(session);
             if (channel && channel->isOpen() &&
