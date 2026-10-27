@@ -144,10 +144,11 @@ namespace {
                     g_rtcMessages.emplace_back(remoteId, std::get<rtc::string>(std::move(message)));
                 });
             });
-            session->pc->onStateChange([remoteId, session](rtc::PeerConnection::State state) {
+            std::weak_ptr<GDRTCPeerSession> weakSession = session;
+            session->pc->onStateChange([remoteId, weakSession](rtc::PeerConnection::State state) {
                 if (state == rtc::PeerConnection::State::Failed ||
                     state == rtc::PeerConnection::State::Closed) {
-                    session->failed = true;
+                    if (auto current = weakSession.lock()) current->failed = true;
                     log::warn("GD-RTC WebRTC peer {} entered terminal state {}; it will be retried",
                         remoteId, static_cast<int>(state));
                 } else if (state == rtc::PeerConnection::State::Connected) {
